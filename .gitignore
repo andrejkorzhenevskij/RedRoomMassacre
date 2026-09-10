@@ -1,0 +1,67 @@
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+
+# User settings
+[Uu]ser[Ss]ettings/
+
+# IDE
+.vscode/
+.idea/
+
+# Generated project files
+*.csproj
+*.sln
+*.slnx
+*.user
+*.userprefs
+
+# Crash dumps
+*.blob
+
+# OS files
+.DS_Store
+Thumbs.db# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+
+# User settings
+[Uu]ser[Ss]ettings/
+
+# IDE
+.vscode/
+.idea/
+
+# Generated project files
+*.csproj
+*.sln
+*.slnx
+*.user
+*.userprefs
+
+# Crash dumps
+*.blob
+*.dmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Builds
+RRM00001/
+
+# Prototype verification screenshots
+Verification/
+
+# Crash dumps
+*.blob
