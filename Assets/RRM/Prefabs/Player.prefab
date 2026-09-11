@@ -1173,7 +1173,7 @@ MonoBehaviour:
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   viewCamera: {fileID: 0}
   autonomousMovement: 0
-  circleRadius: 1.6
+  obstacleLookAhead: 0.75
   moveSpeed: 3.2
   acceleration: 12
   braking: 16
@@ -3518,6 +3518,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1730946273756231795}
   - component: {fileID: 1376998826515616629}
+  - component: {fileID: 9126605729206659466}
   m_Layer: 0
   m_Name: Handheld VHS Camera
   m_TagString: Untagged
@@ -3568,6 +3569,26 @@ MonoBehaviour:
   fieldOfView: 60
   conePreviewLength: 50
   showOverlay: 1
+  mouseSensitivity: 0.15
+  minPitch: -25
+  maxPitch: 70
+  maxYaw: 90
+--- !u!114 &9126605729206659466
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5515328350918128255}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 17e0be21e6d8d4996a9d0adf072b2893, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::RRM.CameraDevice
+  pickupDistance: 1.5
+  pickupObstructionMask:
+    serializedVersion: 2
+    m_Bits: 1
 --- !u!1 &7350018897458370516
 GameObject:
   m_ObjectHideFlags: 0

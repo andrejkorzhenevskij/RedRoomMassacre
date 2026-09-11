@@ -117,6 +117,33 @@ namespace RRM.Editor
                 Check(recorder.CanSee(cameraObject.transform.TransformPoint(Vector3.forward * 100000f)),
                     "Distant visibility follows handheld yaw and pitch");
                 Check(!recorder.CanSee(visible), "Turning the lens changes the detected field of view");
+                var otherCamera = new GameObject("Independent Recorder").AddComponent<CameraRecorder>();
+                otherCamera.lens = otherCamera.transform;
+                otherCamera.transform.SetPositionAndRotation(cameraObject.transform.position, Quaternion.Euler(0, 180, 0));
+                cameraObject.transform.rotation = Quaternion.identity;
+                recorder.subjects = otherCamera.subjects = new[] { health };
+                Check(!recorder.ReportReady && !otherCamera.ReportReady, "Reports stay hidden while the target lives");
+                health.Damaged += recorder.Observe;
+                health.Damaged += otherCamera.Observe;
+                try
+                {
+                    Check(health.ApplyDamage(player, zone, visible, Vector3.forward, health.Health, 0), "Report receives real fatal DamageEvent");
+                    CameraDevice witness = recorder.GetComponent<CameraDevice>();
+                    CameraDevice blind = otherCamera.GetComponent<CameraDevice>();
+                    Check(witness.Events.Count == 2 && witness.RecordedHits == 2 && witness.DeathRecorded,
+                        "Witness retains separate hit events, including the fatal hit exactly once");
+                    Check(blind.Events.Count == 0 && !blind.DeathRecorded && !blind.LastEventDistance.HasValue,
+                        "The same damage is not copied to a camera facing away");
+                    Check(recorder.ReportReady && otherCamera.ReportReady
+                        && otherCamera.ReportText.Contains("Death recorded: NO")
+                        && otherCamera.ReportText.Contains("Last recorded distance: N/A"),
+                        "Death opens reports without pretending an unseen death was recorded");
+                    Check(witness.Events[1].Damage.Target == health && witness.Events[1].Damage.IsFatal
+                        && Mathf.Abs(witness.Events[1].Distance - 2f) < 0.001f, "Event retains its target and lens-to-hit distance");
+                    cameraObject.transform.position += Vector3.right * 50f;
+                    Check(Mathf.Abs(witness.LastEventDistance.Value - 2f) < 0.001f, "Distance is captured at the event, not recomputed later");
+                }
+                finally { health.Damaged -= recorder.Observe; health.Damaged -= otherCamera.Observe; }
                 Debug.Log("RRM CHECKS PASSED: damage validation, phases, deduplication, body parts, death, recording, occlusion.");
             }
             finally
@@ -187,6 +214,9 @@ namespace RRM.Editor
         private static CapsuleCollider dummyCollider;
         private static Color32[] groundFeed;
         private static RenderTexture placedTexture;
+        private static CameraDevice placedDevice;
+        private static string deviceId;
+        private static int placedRecordings;
         private static Color32[] beforeLiveFrame;
         private static float wanderMinX, wanderMaxX, wanderMinZ, wanderMaxZ;
         private static UnityEngine.Random.State oldRandomState;
@@ -215,16 +245,30 @@ namespace RRM.Editor
             RunAndExit();
         }
 
+        public static void RunReportsAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.ReportsOnly", true);
+            RunCameraAndExit();
+        }
+
+        public static void RunRangeAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.RangeOnly", true);
+            RunAndExit();
+        }
+
         public static void Run()
         {
             foreach (string name in new[] { "live-ui.png", "combat-blood-ui.png", "handheld-aim-ui.png",
                 "rec-visible-ui.png", "rec-hidden-ui.png", "height-ground-ui.png", "height-platform-ui.png",
-                "passive-handheld-ui.png", "passive-recording-ui.png", "controls-handheld-ui.png", "controls-placed-ui.png" })
+                "passive-handheld-ui.png", "passive-recording-ui.png", "controls-handheld-ui.png", "controls-placed-ui.png",
+                "device-pickup-ui.png", "report-held-yes.png", "report-held-no.png", "report-placed-no.png", "report-placed-yes.png" })
             {
                 string screenshot = Path.GetFullPath("Verification/" + name);
                 if (File.Exists(screenshot)) File.Delete(screenshot);
             }
-            EditorSceneManager.OpenScene(CombatPrototypeBuilder.ScenePath);
+            EditorSceneManager.OpenScene(SessionState.GetBool("RRM.PlayCheck.RangeOnly", false)
+                ? CombatPrototypeBuilder.RangeScenePath : CombatPrototypeBuilder.ScenePath);
             CombatPrototypeTests.Run();
             SessionState.SetBool(Active, true);
             Resume();
@@ -275,6 +319,10 @@ namespace RRM.Editor
                 since = Time.time;
                 step = SessionState.GetBool("RRM.PlayCheck.CameraOnly", false) ? 40 : 0;
                 SessionState.SetBool("RRM.PlayCheck.CameraOnly", false);
+                if (SessionState.GetBool("RRM.PlayCheck.ReportsOnly", false)) step = 55;
+                SessionState.SetBool("RRM.PlayCheck.ReportsOnly", false);
+                if (SessionState.GetBool("RRM.PlayCheck.RangeOnly", false)) step = 80;
+                SessionState.SetBool("RRM.PlayCheck.RangeOnly", false);
                 failed = false;
                 hitTime = -1f;
                 damageEvents = 0;
@@ -311,7 +359,8 @@ namespace RRM.Editor
             {
                 if (!Application.isPlaying) return;
                 if (failed) throw new InvalidOperationException("Runtime logged an error; see the preceding entry.");
-                if (EditorApplication.timeSinceStartup - started > 90) throw new TimeoutException("Play check timed out.");
+                if (EditorApplication.timeSinceStartup - started > 90)
+                    throw new TimeoutException($"Play check timed out at step {step}, simulated age {Time.time - since:F2}, player {player.position}, return point {beforePlayer}.");
                 float age = Time.time - since;
                 EditorApplication.QueuePlayerLoopUpdate();
                 if (step == 10)
@@ -820,6 +869,13 @@ namespace RRM.Editor
                     RedCenter(beforeLiveFrame);
                     Require(!recorder.IsPlaced && recorder.IsRecording && recorder.transform.IsChildOf(player.transform),
                         "Camera starts active in the player's hand with a live feed");
+                    placedDevice = recorder.GetComponent<CameraDevice>();
+                    deviceId = placedDevice.Id;
+                    Require(Guid.TryParseExact(deviceId, "N", out _) && placedDevice.State == CameraDeviceState.Held
+                        && placedDevice.Owner == player.GetComponent<PlayerController>()
+                        && placedDevice.Owner.HeldCamera == placedDevice,
+                        "Existing handheld is a CameraDevice with an ID and matching holder reference");
+                    mountLocalPosition = placedDevice.transform.localPosition;
                     beforeLens = recorder.lens.position;
                     beforeLensRotation = recorder.lens.rotation;
                     placedTexture = recorder.LiveTexture;
@@ -832,6 +888,9 @@ namespace RRM.Editor
                 {
                     Require(recorder.IsPlaced && recorder.transform.parent == null && !recorder.IsAiming,
                         "F detaches the existing camera and disables handheld aiming");
+                    Require(placedDevice.State == CameraDeviceState.Placed && !placedDevice.Owner
+                        && !player.GetComponent<PlayerController>().HeldCamera && placedDevice.Id == deviceId,
+                        "Placement clears ownership, keeps the same device ID and empties the player's hand");
                     Require(recorder.IsRecording && !recorder.liveCamera.enabled
                         && !recorder.liveCamera.targetTexture && !recorder.LiveTexture && !placedTexture,
                         "Placed recording stays active without a rendering camera or live texture");
@@ -874,6 +933,7 @@ namespace RRM.Editor
                         "Re-enabling placed recording does not restore remote video");
                     dummy.ApplyDamage(player.gameObject, torso, torso.transform.position, Vector3.forward, 1f, 0f);
                     Require(recorder.RecordedHits == recorded + 2, "Re-enabled recorder subscribes exactly once");
+                    placedRecordings = recorder.RecordedHits;
                     ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/passive-recording-ui.png"));
                     Debug.Log("RRM PASSIVE CHECK: F hides feed, releases texture and stops rendering; fixed recorder receives damage privately while player and Dummy move.");
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F));
@@ -884,7 +944,7 @@ namespace RRM.Editor
                     Require(recorder.IsPlaced && recorder.transform.parent == null
                         && Object.FindObjectsByType<CameraRecorder>(FindObjectsSortMode.None).Length == 1
                         && recorder.IsRecording && !recorder.LiveTexture && !recorder.liveCamera.enabled,
-                        "Repeated F neither restores video nor duplicates the recorder");
+                        "F from too far away cannot pick up the device or restore remote video");
                     if (!Application.isBatchMode)
                         Require(File.Exists(Path.GetFullPath("Verification/passive-handheld-ui.png"))
                             && File.Exists(Path.GetFullPath("Verification/passive-recording-ui.png")), "Handheld and passive screenshots exist");
@@ -908,8 +968,9 @@ namespace RRM.Editor
                 {
                     Require(!recorder.ControlsVisible && recorder.IsRecording && !recorder.LiveTexture,
                         "F1 closes controls and leaves placed recording passive");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
-                    Next();
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    step = 52;
+                    since = Time.time;
                 }
                 else if (step == 48 && age > 0.6f)
                 {
@@ -919,6 +980,9 @@ namespace RRM.Editor
                         && recorder.transform.IsChildOf(GameObject.Find("Player").transform)
                         && Object.FindObjectsByType<CameraRecorder>(FindObjectsSortMode.None).Length == 1 && !placedTexture,
                         "Restart removes the placed camera, releases its texture and restores one handheld camera");
+                    Require(!placedDevice && recorder.GetComponent<CameraDevice>().Id != deviceId
+                        && Object.FindObjectsByType<CameraDevice>(FindObjectsSortMode.None).Length == 1,
+                        "Restart creates one new device instance instead of keeping an orphan or reusing its ID");
                     ReadLiveFrame("placed-restart-feed.png");
                     Require(!recorder.ControlsVisible, "Restart begins with controls closed");
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F1));
@@ -944,7 +1008,231 @@ namespace RRM.Editor
                     if (!Application.isBatchMode)
                         Require(File.Exists(Path.GetFullPath("Verification/controls-handheld-ui.png"))
                             && File.Exists(Path.GetFullPath("Verification/controls-placed-ui.png")), "Both controls screenshots exist");
-                    Finish(true, "RRM CAMERA PLAY CHECK PASSED: passive placed recording, no remote feed, F1 controls in both modes and restart.");
+                    step = 55;
+                    since = Time.time;
+                }
+                else if (step == 52)
+                {
+                    Vector3 offset = beforePlayer - player.transform.position;
+                    offset.y = 0f;
+                    if (offset.magnitude > 0.2f)
+                    {
+                        var keys = new List<Key>();
+                        if (offset.x > 0.1f) keys.Add(Key.D);
+                        if (offset.x < -0.1f) keys.Add(Key.A);
+                        if (offset.z > 0.1f) keys.Add(Key.W);
+                        if (offset.z < -0.1f) keys.Add(Key.S);
+                        InputSystem.QueueStateEvent(keyboard, new KeyboardState(keys.ToArray()));
+                    }
+                    else
+                    {
+                        InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F));
+                        Next();
+                    }
+                }
+                else if (step == 53 && age > 0.3f)
+                {
+                    Require(placedDevice == recorder.GetComponent<CameraDevice>() && placedDevice.Id == deviceId
+                        && placedDevice.Owner == player.GetComponent<PlayerController>()
+                        && placedDevice.State == CameraDeviceState.Held && placedDevice.Owner.HeldCamera == placedDevice,
+                        "Walking back and pressing F picks up the same device and assigns its owner again");
+                    Require(recorder.RecordedHits == placedRecordings && recorder.IsRecording
+                        && recorder.LiveTexture && recorder.liveCamera.enabled,
+                        "Pickup preserves recorded events and restores the same recorder's live feed");
+                    Require(Vector3.Distance(placedDevice.transform.localPosition, mountLocalPosition) < 0.001f,
+                        "Pickup restores the existing hand mount");
+                    ReadLiveFrame("device-pickup-feed.png");
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/device-pickup-ui.png"));
+                    beforePlayer = player.transform.position;
+                    beforeLens = recorder.lens.position;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.S));
+                    Next();
+                }
+                else if (step == 54 && age > 0.5f)
+                {
+                    Require(Vector3.Distance(player.transform.position, beforePlayer) > 0.5f
+                        && Vector3.Distance(recorder.lens.position - beforeLens, player.transform.position - beforePlayer) < 0.05f,
+                        "After pickup the camera follows the moving holder again");
+                    CheckCameraOwnershipTransfer();
+                    Debug.Log("RRM DEVICE CHECK: same ID through F place/pickup, owner cleared/reassigned, transfer to another holder, wall/distance guards and live feed restored.");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                    step = 48;
+                    since = Time.time;
+                }
+                else if ((step == 55 || step == 59 || step == 63 || step == 67) && age > 0.6f)
+                {
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    player = GameObject.Find("Player").GetComponent<Rigidbody>();
+                    dummy = GameObject.Find("Dummy").GetComponent<Damageable>();
+                    dummyBody = dummy.GetComponent<Rigidbody>();
+                    recorder = Object.FindFirstObjectByType<CameraRecorder>();
+                    camera = Camera.main;
+                    dummy.GetComponent<PlayerController>().enabled = false;
+                    FrameDummy();
+                    AimCamera(Vector2.zero);
+                    Require(!recorder.ReportReady && recorder.RecordedHits == 0
+                        && recorder.GetComponent<CameraDevice>().Events.Count == 0,
+                        "New round starts without a report or retained evidence");
+                    Next();
+                }
+                else if ((step == 56 || step == 60 || step == 64 || step == 68) && age > 0.3f)
+                {
+                    var device = recorder.GetComponent<CameraDevice>();
+                    Hurtbox torso = Array.Find(dummy.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
+                    Vector3 point = torso.transform.position;
+                    recorder.transform.LookAt(point);
+                    Physics.SyncTransforms();
+                    Require(recorder.CanSee(point), "Report setup frames the damage point");
+                    bool seen = step == 56 || step == 68;
+                    bool placed = step >= 64;
+                    float distance = Vector3.Distance(recorder.lens.position, point);
+                    if (!placed)
+                    {
+                        Require(dummy.ApplyDamage(player.gameObject, torso, point, Vector3.forward, 1, 0)
+                            && device.Events.Count == 1 && !recorder.ReportReady, "Visible nonfatal hit is retained without an early report");
+                        device.enabled = false;
+                        dummy.ApplyDamage(player.gameObject, torso, point, Vector3.forward, 1, 0);
+                        Require(device.Events.Count == 1, "An inactive CameraDevice cannot witness damage");
+                        device.enabled = true;
+                    }
+                    if (!seen) recorder.transform.Rotate(0, 180, 0, Space.World);
+                    if (placed) Require(device.TryPlace(player.GetComponent<PlayerController>()), "Report camera is placed before the fatal event");
+                    Require(recorder.CanSee(point) == seen, "Fatal visibility matches the report case");
+                    Require(dummy.ApplyDamage(player.gameObject, torso, point, Vector3.forward, dummy.Health, 0),
+                        "Existing Damageable delivers the fatal event to subscribed recorders");
+                    int hits = (placed ? 0 : 1) + (seen ? 1 : 0);
+                    Require(recorder.ReportReady && device.RecordedHits == hits && device.Events.Count == hits
+                        && device.DeathRecorded == seen && recorder.ReportText.Contains("Death recorded: " + (seen ? "YES" : "NO")),
+                        "Report counts only witnessed DamageEvents and does not infer a recorded death from target health");
+                    Require(recorder.ReportText.Contains(device.Id)
+                        && recorder.ReportText.Contains("Camera owner: " + (placed ? "NONE" : "Player")), "Report identifies this device and its current owner");
+                    if (hits > 0)
+                        Require(device.LastEventDistance.HasValue && Mathf.Abs(device.LastEventDistance.Value - distance) < 0.001f,
+                            "Report distance refers to the last witnessed event, even if the death was missed");
+                    else Require(!device.LastEventDistance.HasValue && recorder.ReportText.Contains("N/A"), "No evidence has no invented distance");
+                    if (placed) Require(!recorder.LiveTexture && !recorder.liveCamera.enabled, "End-of-round report does not restore placed live video");
+                    Next();
+                }
+                else if ((step == 57 || step == 61 || step == 65 || step == 69) && age > 0.2f)
+                {
+                    string name = step == 57 ? "report-held-yes" : step == 61 ? "report-held-no"
+                        : step == 65 ? "report-placed-no" : "report-placed-yes";
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/" + name + ".png"));
+                    Debug.Log("RRM REPORT CHECK: " + name + "\n" + recorder.ReportText);
+                    Next();
+                }
+                else if ((step == 58 || step == 62 || step == 66 || step == 70) && age > 0.3f)
+                {
+                    if (step == 70)
+                        Finish(true, "RRM CAMERA REPORT PLAY CHECK PASSED: held/placed YES/NO, separate device evidence, stored distances, inactive rejection and restart.");
+                    else
+                    {
+                        InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                        Next();
+                    }
+                }
+                else if (step == 80 && age > 0.6f)
+                {
+                    Require(SceneManager.GetActiveScene().path == CombatPrototypeBuilder.RangeScenePath,
+                        "Camera range is the active playable scene");
+                    Capture("range-overview.png", 1280, 800);
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/range-start-ui.png"));
+                    beforeDummy = dummyBody.position;
+                    Next();
+                }
+                else if (step == 81 && age > 1.3f)
+                {
+                    Require(Vector3.Distance(beforeDummy, dummyBody.position) > 0.2f,
+                        "Existing Dummy wanders in the new room");
+                    StageRange(new Vector3(-2, 0.02f, -2), new Vector3(2, 0.02f, -2));
+                    Next();
+                }
+                else if (step == 82 && age > 0.3f)
+                {
+                    Require(recorder.CanSee(dummyBody.position + Vector3.up * 1.05f), "Doorway gives a clear view into the other room");
+                    RedCenter(ReadLiveFrame("range-doorway-feed.png"));
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/range-doorway-ui.png"));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.D));
+                    Next();
+                }
+                else if (step == 83 && age > 1.2f)
+                {
+                    Require(player.position.x > 0.8f, "D walks through the doorway into the second room");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.A));
+                    Next();
+                }
+                else if (step == 84 && age > 1.2f)
+                {
+                    Require(player.position.x < -1, "A returns through the same doorway");
+                    StageRange(new Vector3(-1, 0.02f, 1), new Vector3(2, 0.02f, 1));
+                    Next();
+                }
+                else if (step == 85 && age > 0.3f)
+                {
+                    Require(!recorder.CanSee(dummyBody.position + Vector3.up * 1.05f), "Solid divider hides the other room");
+                    Require(Array.FindAll(ReadLiveFrame("range-divider-feed.png"), IsDummyRed).Length == 0,
+                        "Dummy is absent from the real feed behind the divider");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.D));
+                    Next();
+                }
+                else if (step == 86 && age > 1f)
+                {
+                    Require(player.position.x < -0.43f && player.position.x > -1.1f,
+                        "Rigidbody cannot walk through the solid divider");
+                    StageRange(new Vector3(-4.92f, 0.02f, -2), new Vector3(-5.5f, 0.02f, 1));
+                    Next();
+                }
+                else if (step == 87 && age > 0.3f)
+                {
+                    Require(recorder.CanSee(dummyBody.position + Vector3.up * 1.05f)
+                        && !recorder.CanSee(dummyBody.position + Vector3.up * 0.25f),
+                        "Low cover hides the lower body but leaves the torso visible to the camera");
+                    RedCenter(ReadLiveFrame("range-low-cover-feed.png"));
+                    StageRange(new Vector3(2.78f, 0.02f, 2.7f), new Vector3(2.2f, 0.02f, 5.3f));
+                    Next();
+                }
+                else if (step == 88 && age > 0.3f)
+                {
+                    Require(!recorder.CanSee(dummyBody.position + Vector3.up * 1.05f), "High cover hides the torso");
+                    Require(Array.FindAll(ReadLiveFrame("range-high-cover-feed.png"), IsDummyRed).Length == 0,
+                        "High cover hides Dummy in the actual live image");
+                    StageRange(new Vector3(-2, 0.02f, -2), new Vector3(2, 0.02f, -2));
+                    Next();
+                }
+                else if (step == 89 && age > 0.3f)
+                {
+                    Require(recorder.CanSee(dummyBody.position + Vector3.up * 1.05f), "Doorway is visible again after repositioning");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F));
+                    Next();
+                }
+                else if (step == 90 && age > 0.3f)
+                {
+                    Require(recorder.IsPlaced && !recorder.LiveTexture, "F leaves the same passive camera watching the doorway");
+                    Hurtbox torso = Array.Find(dummy.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
+                    Require(dummy.ApplyDamage(player.gameObject, torso, torso.transform.position, Vector3.forward, dummy.Health, 0)
+                        && recorder.ReportReady && recorder.GetComponent<CameraDevice>().DeathRecorded,
+                        "Placed camera records a fatal event through the doorway and produces its report");
+                    Next();
+                }
+                else if (step == 91 && age > 0.2f)
+                {
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/range-report-ui.png"));
+                    Next();
+                }
+                else if (step == 92 && age > 0.3f)
+                {
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                    Next();
+                }
+                else if (step == 93 && age > 0.6f)
+                {
+                    recorder = Object.FindFirstObjectByType<CameraRecorder>();
+                    Require(SceneManager.GetActiveScene().path == CombatPrototypeBuilder.RangeScenePath
+                        && GameObject.Find("Room Divider North") && !recorder.IsPlaced && recorder.LiveTexture
+                        && !recorder.ReportReady && recorder.RecordedHits == 0,
+                        "R restarts the camera range, not the old scene, with one fresh handheld camera");
+                    Require(Object.FindObjectsByType<CameraDevice>(FindObjectsSortMode.None).Length == 1, "Range contains only one camera device");
+                    Finish(true, "RRM RANGE PLAY CHECK PASSED: Dummy motion, doorway traversal both ways, solid-wall collision, real feed occlusion, low/high cover, placed report and scene restart.");
                 }
             }
             catch (Exception error) { Finish(false, error.ToString()); }
@@ -954,6 +1242,68 @@ namespace RRM.Editor
         {
             Vector2 point = camera.WorldToScreenPoint(new Vector3(target.x, 0, target.z));
             InputSystem.QueueStateEvent(mouse, new MouseState { position = point, buttons = (ushort)(attack ? 1 : 0) });
+        }
+
+        private static bool IsDummyRed(Color32 color) => color.r >= 70 && color.r >= color.g * 1.4f && color.r >= color.b * 1.4f;
+
+        private static void StageRange(Vector3 playerPosition, Vector3 dummyPosition)
+        {
+            InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+            dummy.GetComponent<PlayerController>().enabled = false;
+            player.position = playerPosition;
+            dummyBody.position = dummyPosition;
+            player.rotation = Quaternion.LookRotation(Vector3.ProjectOnPlane(dummyPosition - playerPosition, Vector3.up));
+            dummyBody.rotation = Quaternion.identity;
+            player.linearVelocity = dummyBody.linearVelocity = Vector3.zero;
+            player.transform.SetPositionAndRotation(playerPosition, player.rotation);
+            dummyBody.transform.SetPositionAndRotation(dummyPosition, Quaternion.identity);
+            recorder.transform.LookAt(dummyBody.position + Vector3.up * 1.05f);
+            Physics.SyncTransforms();
+            AimCamera(Vector2.zero);
+        }
+
+        private static void CheckCameraOwnershipTransfer()
+        {
+            var holder = player.GetComponent<PlayerController>();
+            var nextHolder = dummy.GetComponent<PlayerController>();
+            nextHolder.enabled = false;
+            dummyBody.position = player.transform.position + player.transform.right * 0.8f;
+            dummyBody.rotation = player.transform.rotation;
+            dummyBody.linearVelocity = Vector3.zero;
+            // Editor-tick teleport: synchronize the interpolated hand pose before querying reach.
+            nextHolder.transform.SetPositionAndRotation(dummyBody.position, dummyBody.rotation);
+            Physics.SyncTransforms();
+            nextHolder.enabled = true;
+            Require(!placedDevice.TryPickup(nextHolder) && !placedDevice.TryPlace(nextHolder)
+                && placedDevice.Owner == holder, "Another holder cannot take or place an occupied camera");
+            Require(placedDevice.TryPlace(holder), "Current holder can release the device");
+            var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            try
+            {
+                Vector3 hand = nextHolder.transform.TransformPoint(mountLocalPosition);
+                wall.transform.position = (hand + placedDevice.transform.position) * 0.5f;
+                wall.transform.localScale = Vector3.one * 0.25f;
+                Physics.SyncTransforms();
+                Require(!placedDevice.TryPickup(nextHolder) && !placedDevice.Owner,
+                    "A nearby device cannot be picked up through solid geometry");
+            }
+            finally { Object.DestroyImmediate(wall); Physics.SyncTransforms(); }
+            Vector3 nextHand = nextHolder.transform.TransformPoint(mountLocalPosition);
+            Require(Vector3.Distance(nextHand, placedDevice.transform.position) <= placedDevice.pickupDistance,
+                "Transfer setup puts the new holder's hand within pickup reach");
+            Require(!Physics.Linecast(nextHand, placedDevice.transform.position, out RaycastHit obstruction, 1,
+                QueryTriggerInteraction.Ignore), $"Transfer setup is clear after removing test wall: {obstruction.collider}");
+            Require(placedDevice.TryPickup(nextHolder), "Unobstructed new holder can pick up the free device");
+            Require(placedDevice.Owner == nextHolder
+                && nextHolder.HeldCamera == placedDevice && !holder.HeldCamera
+                && placedDevice.Id == deviceId && !recorder.LiveTexture,
+                "An unobstructed new holder receives the same device, not a copy or a remote feed");
+            Require(placedDevice.TryPlace(nextHolder) && placedDevice.TryPickup(holder)
+                && placedDevice.Owner == holder && !nextHolder.HeldCamera
+                && placedDevice.Id == deviceId && recorder.RecordedHits == placedRecordings
+                && recorder.LiveTexture && Object.FindObjectsByType<CameraDevice>(FindObjectsSortMode.None).Length == 1
+                && Object.FindObjectsByType<Camera>(FindObjectsSortMode.None).Length == 2,
+                "Returning the same device preserves events and creates no extra device or rendering camera");
         }
 
         private static void AimCamera(Vector2 delta, bool attack = false)

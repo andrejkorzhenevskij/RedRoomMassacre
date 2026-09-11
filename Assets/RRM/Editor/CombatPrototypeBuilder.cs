@@ -15,6 +15,57 @@ namespace RRM.Editor
     {
         public const string Root = "Assets/RRM";
         public const string ScenePath = Root + "/Scenes/CombatPrototype.unity";
+        public const string RangeScenePath = Root + "/Scenes/CameraTestRange.unity";
+
+        [MenuItem("RRM/Open Camera Test Range")]
+        public static void OpenCameraTestRange()
+        {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            if (File.Exists(RangeScenePath)) EditorSceneManager.OpenScene(RangeScenePath);
+            else CreateCameraTestRange();
+        }
+
+        public static void CreateCameraTestRange()
+        {
+            if (File.Exists(RangeScenePath))
+            {
+                Debug.Log("RRM camera range already exists; edits were preserved.");
+                return;
+            }
+            var scene = EditorSceneManager.OpenScene(ScenePath);
+            Transform room = GameObject.Find("Test Room").transform;
+            Material wall = AssetDatabase.LoadAssetAtPath<Material>(Root + "/Materials/Wall.mat");
+            Resize("Floor", new Vector3(0, -0.15f, 0), new Vector3(16, 0.3f, 12));
+            Resize("North Wall", new Vector3(0, 1.3f, 6), new Vector3(16.5f, 2.6f, 0.35f));
+            Resize("South Wall", new Vector3(0, 0.3f, -6), new Vector3(16.5f, 0.6f, 0.35f));
+            Resize("West Wall", new Vector3(-8, 1.3f, 0), new Vector3(0.35f, 2.6f, 12));
+            Resize("East Wall", new Vector3(8, 1.3f, 0), new Vector3(0.35f, 2.6f, 12));
+            // A 2.4 m opening at z = -2 connects the rooms without a door controller.
+            Box("Room Divider North", room, new Vector3(0, 1.2f, 2.6f), new Vector3(0.35f, 2.4f, 6.8f), wall);
+            Box("Room Divider South", room, new Vector3(0, 1.2f, -4.6f), new Vector3(0.35f, 2.4f, 2.8f), wall);
+            Box("Low Cover", room, new Vector3(-5.5f, 0.35f, -0.6f), new Vector3(2, 0.7f, 1.2f), wall);
+            Box("High Cover", room, new Vector3(2.2f, 1.1f, 4.4f), new Vector3(2, 2.2f, 1), wall);
+            Box("Blind Corner", room, new Vector3(-4.1f, 1.2f, 3.35f), new Vector3(2.55f, 2.4f, 0.35f), wall);
+            Transform player = GameObject.Find("Player").transform;
+            Transform dummy = GameObject.Find("Dummy").transform;
+            player.position = new Vector3(-4, 0.02f, -3);
+            dummy.position = new Vector3(2.1f, 0.02f, 1.1f);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(player);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(dummy);
+            Camera.main.orthographicSize = 7.1f;
+            EditorSceneManager.SaveScene(scene, RangeScenePath);
+            EditorBuildSettings.scenes = EditorBuildSettings.scenes
+                .Concat(new[] { new EditorBuildSettingsScene(RangeScenePath, true) }).ToArray();
+            AssetDatabase.SaveAssets();
+            Debug.Log("RRM two-room camera range created; CombatPrototype and prefabs preserved.");
+
+            void Resize(string name, Vector3 position, Vector3 size)
+            {
+                Transform item = room.Find(name);
+                item.localPosition = position;
+                item.localScale = size;
+            }
+        }
 
         [MenuItem("RRM/Open Combat Prototype")]
         public static void Open()
@@ -162,6 +213,23 @@ namespace RRM.Editor
                 (start + end) * 0.5f - rotation * Vector3.up * 0.1f,
                 new Vector3(2, 0.2f, Vector3.Distance(start, end)), material);
             ramp.transform.localRotation = rotation;
+        }
+
+        [MenuItem("RRM/Add Camera Device")]
+        public static void AddCameraDevice()
+        {
+            string path = Root + "/Prefabs/Player.prefab";
+            GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                var recorder = contents.GetComponentInChildren<CameraRecorder>();
+                if (!recorder.GetComponent<CameraDevice>())
+                    recorder.gameObject.AddComponent<CameraDevice>();
+                // RequireComponent may already have added it during load; persist it either way.
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally { PrefabUtility.UnloadPrefabContents(contents); }
+            Debug.Log("RRM CameraDevice attached to the existing camera; scene preserved.");
         }
 
         public static void UpdateInteractivity()

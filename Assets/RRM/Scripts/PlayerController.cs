@@ -20,7 +20,7 @@ namespace RRM
 
         private Rigidbody body;
         private MeleeAttack attack;
-        private CameraRecorder recorder;
+        public CameraDevice HeldCamera { get; internal set; }
         private Damageable health;
         private InputActionAsset actions;
         private InputAction move;
@@ -33,7 +33,6 @@ namespace RRM
         {
             body = GetComponent<Rigidbody>();
             attack = GetComponent<MeleeAttack>();
-            recorder = GetComponentInChildren<CameraRecorder>();
             health = GetComponent<Damageable>();
             if (autonomousMovement) return;
             if (!viewCamera) viewCamera = Camera.main;
@@ -73,8 +72,14 @@ namespace RRM
                 Wander();
                 return;
             }
+            if (Keyboard.current != null && Keyboard.current.fKey.wasPressedThisFrame)
+            {
+                if (HeldCamera) HeldCamera.TryPlace(this);
+                // ponytail: one device in this prototype; choose nearest only when multiple devices exist.
+                else FindFirstObjectByType<CameraDevice>()?.TryPickup(this);
+            }
             movement = Vector2.ClampMagnitude(move.ReadValue<Vector2>(), 1f);
-            if (Mouse.current != null && viewCamera && !(recorder && recorder.IsAiming))
+            if (Mouse.current != null && viewCamera && !(HeldCamera && HeldCamera.IsAiming))
             {
                 Ray ray = viewCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
                 Plane floor = new Plane(Vector3.up, Vector3.zero);
@@ -127,7 +132,7 @@ namespace RRM
             float rate = movement.sqrMagnitude > 0.01f ? acceleration : braking;
             Vector3 change = Vector3.ClampMagnitude(desired - current, rate * Time.fixedDeltaTime);
             body.AddForce(change, ForceMode.VelocityChange);
-            if (recorder && recorder.IsAiming)
+            if (HeldCamera && HeldCamera.IsAiming)
             {
                 body.angularVelocity = Vector3.zero;
                 return;

@@ -1,9 +1,11 @@
+using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Serialization;
 
 namespace RRM
 {
+    [RequireComponent(typeof(CameraDevice))]
     public sealed class CameraRecorder : MonoBehaviour
     {
         public Transform lens;
@@ -20,33 +22,42 @@ namespace RRM
         [Range(-80f, 0f)] public float minPitch = -25f;
         [Range(0f, 80f)] public float maxPitch = 70f;
         [Range(0f, 90f)] public float maxYaw = 90f;
-        public bool IsPlaced { get; private set; }
-        public bool IsRecording => isActiveAndEnabled && lens;
+        public bool IsPlaced => device && device.State == CameraDeviceState.Placed;
+        public bool IsRecording => isActiveAndEnabled && lens && Device && Device.isActiveAndEnabled;
         public bool ControlsVisible { get; private set; }
-        public bool IsAiming => !IsPlaced && isActiveAndEnabled && liveCamera && lens
+        private bool IsHeldByPlayer => device && device.Owner && !device.Owner.autonomousMovement;
+        public bool IsAiming => IsHeldByPlayer && isActiveAndEnabled && liveCamera && lens
             && Mouse.current != null && Mouse.current.rightButton.isPressed;
         public RenderTexture LiveTexture => liveTexture;
-        public int RecordedHits { get; private set; }
+        public int RecordedHits => Device.RecordedHits;
+        // Round completion is not evidence: an unseen fatal event must still report NO.
+        public bool ReportReady => subjects != null && Array.Exists(subjects, subject => subject && subject.IsDead);
+        public string ReportText => "Camera ID: " + Device.Id
+            + "\nCamera owner: " + (Device.Owner ? Device.Owner.name : "NONE")
+            + "\nHits recorded: " + Device.RecordedHits
+            + "\nEvents recorded: " + Device.Events.Count
+            + "\nDeath recorded: " + (Device.DeathRecorded ? "YES" : "NO")
+            + "\nLast recorded distance: " + (Device.LastEventDistance.HasValue
+                ? Device.LastEventDistance.Value.ToString("0.00") + " m" : "N/A");
         public string LastResult => Time.unscaledTime - resultTime < 1f ? "REC EVENT" : "STANDBY";
 
         private GUIStyle label;
+        private CameraDevice device;
+        private CameraDevice Device => device ? device : device = GetComponent<CameraDevice>();
         private GUIStyle heading;
         private Vector2 controlsScroll;
+        private Vector2 reportScroll;
         private float resultTime = float.NegativeInfinity;
         private RenderTexture liveTexture;
         private const float FeedAspect = 4f / 3f;
         private static readonly Color RecordingColor = new Color(0.35f, 0.85f, 0.65f);
 
+        private void Awake() { device = GetComponent<CameraDevice>(); }
+
         private void Update()
         {
             if (Keyboard.current != null && Keyboard.current.f1Key.wasPressedThisFrame)
                 ControlsVisible = !ControlsVisible;
-            if (!IsPlaced && Keyboard.current != null && Keyboard.current.fKey.wasPressedThisFrame)
-            {
-                transform.SetParent(null, true);
-                IsPlaced = true;
-                StopLiveFeed();
-            }
             if (!IsAiming || Mouse.current.rightButton.wasPressedThisFrame) return;
             Vector2 delta = Mouse.current.delta.ReadValue() * mouseSensitivity;
             Vector3 angles = transform.localEulerAngles;
@@ -60,7 +71,18 @@ namespace RRM
             if (subjects != null)
                 foreach (Damageable subject in subjects)
                     if (subject) subject.Damaged += Observe;
-            if (IsPlaced || !liveCamera || !lens) return;
+            RefreshLiveFeed();
+        }
+
+        internal void RefreshLiveFeed()
+        {
+            if (!isActiveAndEnabled || !IsHeldByPlayer || !liveCamera || !lens)
+            {
+                StopLiveFeed();
+                return;
+            }
+            if (liveTexture) return;
+            playerAttack = device.Owner.GetComponent<MeleeAttack>();
             liveTexture = new RenderTexture(640, 480, 24, RenderTextureFormat.ARGB32)
             {
                 name = "Handheld Live Feed",
@@ -110,7 +132,7 @@ namespace RRM
         public void Observe(DamageEvent hit)
         {
             if (!IsRecording || !CanSee(hit.Point)) return;
-            RecordedHits++;
+            Device.Record(hit, Vector3.Distance(lens.position, hit.Point));
             resultTime = Time.unscaledTime;
         }
 
@@ -156,13 +178,18 @@ namespace RRM
                 GUILayout.Label("CONTROLS / F1", heading);
                 controlsScroll = GUILayout.BeginScrollView(controlsScroll);
                 GUILayout.Label("WASD / arrows: move\nMouse: turn character\nRMB + drag: aim handheld camera\n"
-                    + "LMB: melee attack\nF: place camera (no live feed)\nR: restart room\nF1: close this guide", label);
+                    + "LMB: melee attack\nF: place / pick up nearby camera\nR: restart room\nF1: close this guide", label);
                 GUILayout.EndScrollView();
                 GUILayout.EndArea();
                 return;
             }
-            // Placed recording is private: neither video nor live event diagnostics reach the player.
-            if (IsPlaced) return;
+            if (ReportReady)
+            {
+                DrawReport();
+                return;
+            }
+            // Until round completion, placed recording has no remote video or event diagnostics.
+            if (!IsHeldByPlayer) return;
             if (liveTexture)
             {
                 float feedWidth = Mathf.Min(320f, Screen.width * 0.4f, Screen.height * 0.4f * FeedAspect);
@@ -188,6 +215,30 @@ namespace RRM
             GUI.color = Time.unscaledTime - resultTime < 0.25f ? RecordingColor : Color.white;
             GUI.Label(new Rect(30, 111, width - 28, 44), LastResult, label);
             GUI.color = Color.white;
+        }
+
+        private void DrawReport()
+        {
+            var reports = Array.FindAll(FindObjectsByType<CameraRecorder>(FindObjectsSortMode.InstanceID),
+                recorder => recorder.isActiveAndEnabled && recorder.ReportReady);
+            // One report window; the data belongs to each device, not to a global recorder.
+            if (reports.Length == 0 || reports[0] != this) return;
+            float width = Mathf.Min(470f, Screen.width - 32f);
+            float height = Mathf.Min(300f, Screen.height - 32f);
+            var rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+            GUI.color = new Color(0.035f, 0.045f, 0.04f, 0.96f);
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = Color.white;
+            GUILayout.BeginArea(new Rect(rect.x + 14f, rect.y + 10f, rect.width - 28f, rect.height - 20f));
+            GUILayout.Label("CAMERA REPORT", heading);
+            reportScroll = GUILayout.BeginScrollView(reportScroll);
+            foreach (CameraRecorder report in reports)
+            {
+                GUILayout.Label(report.ReportText, label);
+                GUILayout.Space(14f);
+            }
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
         }
     }
 }
