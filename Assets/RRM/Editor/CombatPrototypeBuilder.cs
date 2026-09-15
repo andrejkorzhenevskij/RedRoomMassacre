@@ -17,13 +17,223 @@ namespace RRM.Editor
         public const string ScenePath = Root + "/Scenes/CombatPrototype.unity";
         public const string RangeScenePath = Root + "/Scenes/CameraTestRange.unity";
 
-        [MenuItem("RRM/Open Camera Test Range")]
-        public static void OpenCameraTestRange()
+        [MenuItem("RRM/Set Starter Cover Height")]
+        public static void SetStarterCoverHeight()
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            if (File.Exists(RangeScenePath)) EditorSceneManager.OpenScene(RangeScenePath);
-            else CreateCameraTestRange();
+            var scene = EditorSceneManager.OpenScene(ScenePath);
+            LowerStarterCover(GameObject.Find("Test Room").transform.Find("Low Cover"));
+            EditorSceneManager.SaveScene(scene);
         }
+
+        private static void LowerStarterCover(Transform cover)
+        {
+            if (!cover) throw new InvalidOperationException("Low Cover is missing; the room was not rebuilt.");
+            Vector3 size = cover.localScale;
+            Vector3 position = cover.localPosition;
+            position.y += (0.45f - size.y) * 0.5f;
+            size.y = 0.45f;
+            cover.localPosition = position;
+            cover.localScale = size;
+        }
+
+        [MenuItem("RRM/Update Portable Lamps")]
+        public static void UpdatePortableLamps()
+        {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            var scene = EditorSceneManager.OpenScene(ScenePath);
+            string playerPath = Root + "/Prefabs/Player.prefab";
+            var player = PrefabUtility.LoadPrefabContents(playerPath);
+            try
+            {
+                ConfigureFists(player);
+                PrefabUtility.SaveAsPrefabAsset(player, playerPath);
+            }
+            finally { PrefabUtility.UnloadPrefabContents(player); }
+
+            GameObject floor = GameObject.Find("Floor");
+            if (!floor.TryGetComponent(out LightLevelPreview preview)) preview = floor.AddComponent<LightLevelPreview>();
+            preview.unlitTemplate = LightPreviewMaterial();
+            string lampPath = Root + "/Prefabs/PortableLamp.prefab";
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(lampPath);
+            if (!prefab)
+            {
+                var lamp = new GameObject("Portable Lamp");
+                try
+                {
+                    var item = lamp.AddComponent<PortableLamp>();
+                    Material metal = Material("Metal", new Color(0.13f, 0.15f, 0.16f));
+                    Visual("Base", lamp.transform, new Vector3(0, 0.06f, 0), new Vector3(0.36f, 0.12f, 0.36f), metal);
+                    Visual("Stem", lamp.transform, new Vector3(0, 0.25f, 0), new Vector3(0.09f, 0.3f, 0.09f), metal);
+                    Visual("Bulb", lamp.transform, new Vector3(0, 0.47f, 0), new Vector3(0.24f, 0.25f, 0.24f),
+                        Material("Weapon", new Color(0.78f, 0.78f, 0.72f)));
+                    Visual("Handle", lamp.transform, new Vector3(0, 0.66f, 0), new Vector3(0.3f, 0.07f, 0.08f), metal);
+                    var emitter = new GameObject("Light");
+                    emitter.transform.SetParent(lamp.transform, false);
+                    emitter.transform.localPosition = new Vector3(0, 0.47f, 0.15f);
+                    var light = emitter.AddComponent<Light>();
+                    light.lightmapBakeType = LightmapBakeType.Realtime;
+                    light.color = new Color(1f, 0.94f, 0.82f);
+                    light.shadows = LightShadows.Soft;
+                    item.lightSource = emitter.AddComponent<LightSource>();
+                    item.lightSource.intensity = 85f;
+                    item.lightSource.radius = 3.2f;
+                    item.lightSource.pointLight = light;
+                    item.lightSource.SyncPointLight();
+                    prefab = PrefabUtility.SaveAsPrefabAsset(lamp, lampPath);
+                }
+                finally { Object.DestroyImmediate(lamp); }
+            }
+            Vector3[] positions = { new Vector3(-3.3f, 0.02f, -3.5f), new Vector3(-6.8f, 0.02f, 2f), new Vector3(3.2f, 0.02f, -2.1f) };
+            EditorUtility.SetDirty(prefab.GetComponent<PortableLamp>());
+            PrefabUtility.SavePrefabAsset(prefab);
+            for (int i = 0; i < positions.Length; i++)
+            {
+                string name = "Portable Lamp " + (i + 1);
+                if (GameObject.Find(name)) continue;
+                var instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, scene);
+                instance.name = name;
+                instance.transform.position = positions[i];
+                PrefabUtility.RecordPrefabInstancePropertyModifications(instance.transform);
+            }
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorSceneManager.SaveScene(scene);
+            AssetDatabase.SaveAssets();
+            EditorSceneManager.OpenScene(ScenePath);
+            if (Object.FindObjectsByType<PortableLamp>().Length != 3)
+                throw new InvalidOperationException("Expected three saved lamps; existing extra items were not removed.");
+            Debug.Log("RRM LAMPS SAVED: three instances, fists, transparent light preview; existing room geometry preserved.");
+        }
+
+        private static void ConfigureFists(GameObject player)
+        {
+            var attack = player.GetComponent<MeleeAttack>();
+            Transform baton = attack.weaponPivot.Find("Baton");
+            if (baton) Object.DestroyImmediate(baton.gameObject);
+            attack.weaponTip.localPosition = Vector3.forward * attack.fistReach;
+            if (!attack.fistVisual)
+            {
+                Visual("Fist", attack.weaponTip, Vector3.zero, Vector3.one * 0.18f,
+                    Material("Head", new Color(0.65f, 0.67f, 0.64f)));
+                attack.fistVisual = attack.weaponTip.Find("Fist").gameObject;
+            }
+            attack.fistVisual.SetActive(false);
+        }
+
+        private static Material LightPreviewMaterial()
+        {
+            Material material = Material("LightLevelPreview", Color.white, true);
+            material.SetFloat("_Surface", 1);
+            material.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+            material.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+            material.SetFloat("_SrcBlendAlpha", (float)BlendMode.One);
+            material.SetFloat("_DstBlendAlpha", (float)BlendMode.OneMinusSrcAlpha);
+            material.SetFloat("_ZWrite", 0);
+            material.SetOverrideTag("RenderType", "Transparent");
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.SetShaderPassEnabled("DepthOnly", false);
+            material.renderQueue = (int)RenderQueue.Transparent;
+            EditorUtility.SetDirty(material);
+            return material;
+        }
+
+        [MenuItem("RRM/Restore Two Room Prototype")]
+        public static void RestoreTwoRoomPrototype()
+        {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            var scene = EditorSceneManager.OpenScene(ScenePath);
+            Transform room = scene.GetRootGameObjects().First(root => root.name == "Test Room").transform;
+            if (room.Find("Room Divider North") && room.Find("Room Divider South")) return;
+            var layout = EditorSceneManager.OpenScene(RangeScenePath, OpenSceneMode.Additive);
+            try
+            {
+                var roots = layout.GetRootGameObjects();
+                Transform sourceRoom = roots.First(root => root.name == "Test Room").transform;
+                // Copy layout only: existing actors, evidence and recording references stay in this scene.
+                foreach (Transform source in sourceRoom)
+                {
+                    Transform target = room.Find(source.name);
+                    if (!target)
+                    {
+                        target = Object.Instantiate(source.gameObject, room).transform;
+                        target.name = source.name;
+                    }
+                    target.localPosition = source.localPosition;
+                    target.localRotation = source.localRotation;
+                    target.localScale = source.localScale;
+                }
+                foreach (string name in new[] { "Player", "Dummy" })
+                {
+                    Transform target = scene.GetRootGameObjects().First(root => root.name == name).transform;
+                    Transform source = roots.First(root => root.name == name).transform;
+                    target.SetPositionAndRotation(source.position, source.rotation);
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(target);
+                }
+                scene.GetRootGameObjects().First(root => root.name == "Main Camera").GetComponent<Camera>().orthographicSize =
+                    roots.First(root => root.name == "Main Camera").GetComponent<Camera>().orthographicSize;
+                LowerStarterCover(room.Find("Low Cover"));
+                EditorSceneManager.SaveScene(scene);
+            }
+            finally { EditorSceneManager.CloseScene(layout, true); }
+            Debug.Log("RRM CombatPrototype now combines the preserved two-room layout with evidence and light sources.");
+        }
+
+        [MenuItem("RRM/Update Evidence and Light Sources")]
+        public static void AddEvidenceTestAreas() => UpdateEvidenceAndLights(false);
+
+        [MenuItem("RRM/Retune Light Test Layout")]
+        public static void RetuneLightTestLayout() => UpdateEvidenceAndLights(true);
+
+        private static void UpdateEvidenceAndLights(bool retuneLights)
+        {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            var scene = EditorSceneManager.OpenScene(ScenePath);
+            GameObject dummy = GameObject.Find("Dummy");
+            if (!dummy.TryGetComponent(out BloodEvidence evidence))
+            {
+                evidence = dummy.AddComponent<BloodEvidence>();
+                evidence.bloodMaterial = AssetDatabase.LoadAssetAtPath<Material>(Root + "/Materials/Blood.mat");
+            }
+            AddSource("Light Source West", "Low Light Area", new Vector3(-5.1f, 1f, -3.1f), 100f, 3f);
+            AddSource("Light Source North", "Dark Area", new Vector3(-5.6f, 1f, 3.7f), 100f, 3f);
+            AddSource("Light Source East", null, new Vector3(2.8f, 1.05f, 0.4f), 100f, 3.5f);
+            AddSource("Light Source Doorway", null, new Vector3(-1.9f, 1f, -1.8f), 75f, 2.6f);
+            AddSource("Light Source West Mid", null, new Vector3(-6.2f, 1f, 0.5f), 48f, 2.2f);
+            AddSource("Light Source East South", null, new Vector3(3f, 1f, -4.5f), 100f, 2.4f);
+            AddSource("Light Source East North", null, new Vector3(5.8f, 1f, 4.2f), 90f, 3.2f);
+            AddSource("Light Source Platform", null, new Vector3(5.5f, 1.85f, -0.4f), 60f, 2.2f);
+            if (!GameObject.Find("Floor").TryGetComponent(out LightLevelPreview preview))
+            {
+                preview = GameObject.Find("Floor").AddComponent<LightLevelPreview>();
+            }
+            preview.unlitTemplate = LightPreviewMaterial();
+            EditorSceneManager.SaveScene(scene);
+            Debug.Log("RRM evidence and logical light sources ready; room layout and prefabs preserved.");
+
+            void AddSource(string name, string oldZoneName, Vector3 position, float intensity, float radius)
+            {
+                GameObject sourceObject = GameObject.Find(name);
+                if (sourceObject && !retuneLights) return;
+                if (!sourceObject && oldZoneName != null) sourceObject = GameObject.Find(oldZoneName);
+                if (!sourceObject)
+                {
+                    sourceObject = new GameObject(name);
+                    sourceObject.transform.SetParent(GameObject.Find("Test Room").transform, false);
+                }
+                // The renamed script keeps its GUID; remove only the old zone's preview and trigger.
+                if (sourceObject.TryGetComponent(out BoxCollider volume)) Object.DestroyImmediate(volume);
+                Transform preview = sourceObject.transform.Find("Area Floor Preview");
+                if (preview) Object.DestroyImmediate(preview.gameObject);
+                sourceObject.name = name;
+                sourceObject.transform.position = position;
+                if (!sourceObject.TryGetComponent(out LightSource source)) source = sourceObject.AddComponent<LightSource>();
+                source.intensity = intensity;
+                source.radius = radius;
+            }
+        }
+
+        [MenuItem("RRM/Open Camera Test Range")]
+        public static void OpenCameraTestRange() => Open();
 
         public static void CreateCameraTestRange()
         {
@@ -43,7 +253,7 @@ namespace RRM.Editor
             // A 2.4 m opening at z = -2 connects the rooms without a door controller.
             Box("Room Divider North", room, new Vector3(0, 1.2f, 2.6f), new Vector3(0.35f, 2.4f, 6.8f), wall);
             Box("Room Divider South", room, new Vector3(0, 1.2f, -4.6f), new Vector3(0.35f, 2.4f, 2.8f), wall);
-            Box("Low Cover", room, new Vector3(-5.5f, 0.35f, -0.6f), new Vector3(2, 0.7f, 1.2f), wall);
+            Box("Low Cover", room, new Vector3(-5.5f, 0.225f, -0.6f), new Vector3(2, 0.45f, 1.2f), wall);
             Box("High Cover", room, new Vector3(2.2f, 1.1f, 4.4f), new Vector3(2, 2.2f, 1), wall);
             Box("Blind Corner", room, new Vector3(-4.1f, 1.2f, 3.35f), new Vector3(2.55f, 2.4f, 0.35f), wall);
             Transform player = GameObject.Find("Player").transform;
@@ -142,10 +352,9 @@ namespace RRM.Editor
             pivot.SetParent(player.transform, false);
             pivot.localPosition = new Vector3(0.45f, 1.15f, 0.08f);
             pivot.localRotation = Quaternion.Euler(0, 15, 0);
-            Visual("Baton", pivot, new Vector3(0, 0, 0.58f), new Vector3(0.12f, 0.12f, 1.1f), weapon);
             Transform tip = new GameObject("Weapon Tip").transform;
             tip.SetParent(pivot, false);
-            tip.localPosition = new Vector3(0, 0, 1.12f);
+            tip.localPosition = Vector3.forward * attack.fistReach;
             attack.weaponPivot = pivot;
             attack.weaponTip = tip;
 
@@ -175,6 +384,7 @@ namespace RRM.Editor
             controller.inputActions = AssetDatabase.LoadAssetAtPath<InputActionAsset>("Assets/InputSystem_Actions.inputactions");
             if (!controller.inputActions) throw new InvalidOperationException("Missing template InputSystem_Actions asset.");
             player.transform.position = new Vector3(-1.1f, 0.02f, -1.9f);
+            ConfigureFists(player);
             PrefabUtility.SaveAsPrefabAssetAndConnect(player, Root + "/Prefabs/Player.prefab", InteractionMode.AutomatedAction);
             recorder.subjects = new[] { dummy.GetComponent<Damageable>() };
             controller.viewCamera = camera;
@@ -185,6 +395,7 @@ namespace RRM.Editor
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) }
                 .Concat(EditorBuildSettings.scenes.Where(s => s.path != ScenePath)).ToArray();
             AssetDatabase.SaveAssets();
+            UpdatePortableLamps();
             Debug.Log("RRM prototype created: " + ScenePath);
         }
 
@@ -269,6 +480,54 @@ namespace RRM.Editor
             recorder.conePreviewLength = 50f;
         }
 
+        [MenuItem("RRM/Enable Enemy Prototype")]
+        public static void EnableEnemyPrototype()
+        {
+            if (EditorApplication.isPlaying) throw new InvalidOperationException("Stop Play Mode before configuring the enemy.");
+            if (!Application.isBatchMode && !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            string path = Root + "/Prefabs/Dummy.prefab";
+            GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                ConfigureDummyControls(contents);
+                var attack = contents.GetComponent<MeleeAttack>();
+                if (!attack) attack = contents.AddComponent<MeleeAttack>();
+                Transform visual = contents.GetComponent<HitFeedback>().visual;
+                Transform arm = System.Array.Find(contents.GetComponentsInChildren<Hurtbox>(),
+                    zone => zone.part == BodyPart.RightArm).transform;
+                Transform pivot = visual.Find("Melee Pivot");
+                if (!pivot) { pivot = new GameObject("Melee Pivot").transform; pivot.SetParent(visual, false); }
+                pivot.localPosition = new Vector3(0.43f, 1.08f, 0);
+                pivot.localRotation = Quaternion.Euler(0, 15, 0);
+                arm.SetParent(pivot, false);
+                arm.localPosition = new Vector3(0, 0, 0.3f);
+                arm.localRotation = Quaternion.Euler(90, 0, 0);
+                Transform tip = pivot.Find("Contact Point");
+                if (!tip) { tip = new GameObject("Contact Point").transform; tip.SetParent(pivot, false); }
+                tip.localPosition = new Vector3(0, 0, 0.65f);
+                attack.weaponPivot = pivot;
+                attack.weaponTip = tip;
+                attack.hurtboxMask = 1 << LayerMask.NameToLayer("RRMHurtboxes");
+                attack.windup = 0.7f;
+                attack.strike = 0.18f;
+                attack.recovery = 1.15f;
+                attack.damage = 60f;
+                contents.GetComponent<HitFeedback>().showWindup = true;
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally { PrefabUtility.UnloadPrefabContents(contents); }
+            var scene = EditorSceneManager.OpenScene(ScenePath);
+            var player = GameObject.Find("Player").GetComponent<Damageable>();
+            var dummy = GameObject.Find("Dummy").GetComponent<PlayerController>();
+            dummy.opponent = player;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(dummy);
+            var recorder = GameObject.Find("Player").GetComponentInChildren<CameraRecorder>();
+            recorder.subjects = new[] { dummy.GetComponent<Damageable>(), player };
+            PrefabUtility.RecordPrefabInstancePropertyModifications(recorder);
+            EditorSceneManager.SaveScene(scene);
+            Debug.Log("RRM enemy configured on existing Dummy and right arm; room geometry and camera device preserved.");
+        }
+
         private static void ConfigureDummyControls(GameObject dummy)
         {
             var controller = dummy.GetComponent<PlayerController>();
@@ -310,6 +569,7 @@ namespace RRM.Editor
                 material, health, BodyPart.RightArm, 0.7f, hurtboxLayer);
             Visual("Left Leg", visual, new Vector3(-0.18f, 0.36f, 0), new Vector3(0.23f, 0.7f, 0.3f), material);
             Visual("Right Leg", visual, new Vector3(0.18f, 0.36f, 0), new Vector3(0.23f, 0.7f, 0.3f), material);
+            ConfigureLimbHurtboxes(actor);
             var source = actor.AddComponent<AudioSource>();
             source.playOnAwake = false;
             source.spatialBlend = 0.3f;
@@ -338,7 +598,57 @@ namespace RRM.Editor
             feedback.bodyRenderers = visual.GetComponentsInChildren<Renderer>();
             feedback.blood = particles;
             feedback.impactSound = sound;
+            actor.AddComponent<BloodEvidence>().bloodMaterial = bloodMaterial;
             return actor;
+        }
+
+        [MenuItem("RRM/Add Actor Blood Evidence")]
+        public static void AddActorBloodEvidence()
+        {
+            if (EditorApplication.isPlaying) throw new InvalidOperationException("Stop Play Mode first.");
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            var scene = EditorSceneManager.OpenScene(ScenePath);
+            foreach (var actor in Object.FindObjectsByType<Damageable>())
+            {
+                if (!actor.TryGetComponent(out BloodEvidence evidence))
+                    evidence = actor.gameObject.AddComponent<BloodEvidence>();
+                if (!evidence.bloodMaterial)
+                    evidence.bloodMaterial = AssetDatabase.LoadAssetAtPath<Material>(Root + "/Materials/Blood.mat");
+            }
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorSceneManager.SaveScene(scene);
+            Debug.Log("RRM ACTOR EVIDENCE SAVED: existing actors share BloodEvidence; no geometry rebuilt.");
+        }
+
+        [MenuItem("RRM/Add Limb Hurtboxes")]
+        public static void AddLimbHurtboxes()
+        {
+            if (EditorApplication.isPlaying) throw new InvalidOperationException("Stop Play Mode first.");
+            foreach (string name in new[] { "Player", "Dummy" })
+            {
+                string path = Root + "/Prefabs/" + name + ".prefab";
+                GameObject actor = PrefabUtility.LoadPrefabContents(path);
+                try { ConfigureLimbHurtboxes(actor); PrefabUtility.SaveAsPrefabAsset(actor, path); }
+                finally { PrefabUtility.UnloadPrefabContents(actor); }
+            }
+            Debug.Log("RRM LIMB PREFABS SAVED: existing legs receive Hurtboxes; no scene rebuild.");
+        }
+
+        private static void ConfigureLimbHurtboxes(GameObject actor)
+        {
+            foreach (BodyPart part in new[] { BodyPart.LeftLeg, BodyPart.RightLeg })
+            {
+                var leg = actor.transform.Find("Body Visual/" + (part == BodyPart.LeftLeg ? "Left Leg" : "Right Leg"));
+                var shape = leg.GetComponent<BoxCollider>();
+                if (!shape) shape = leg.gameObject.AddComponent<BoxCollider>();
+                shape.isTrigger = true;
+                leg.gameObject.layer = LayerMask.NameToLayer("RRMHurtboxes");
+                var zone = leg.GetComponent<Hurtbox>();
+                if (!zone) zone = leg.gameObject.AddComponent<Hurtbox>();
+                zone.owner = actor.GetComponent<Damageable>();
+                zone.part = part;
+                zone.damageMultiplier = 0.7f;
+            }
         }
 
         private static void ConfigureBloodBurst(ParticleSystem particles)

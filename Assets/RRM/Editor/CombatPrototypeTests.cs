@@ -27,7 +27,37 @@ namespace RRM.Editor
             {
                 int layer = LayerMask.NameToLayer("RRMHurtboxes");
                 Check(layer >= 0, "Prototype layers exist");
+                var movement = AssetDatabase.LoadAssetAtPath<InputActionAsset>("Assets/InputSystem_Actions.inputactions")
+                    .FindAction("Player/Move", true);
+                foreach (var binding in movement.bindings)
+                    Check(!binding.path.EndsWith("Arrow", StringComparison.OrdinalIgnoreCase),
+                        "Player movement has no arrow-key bindings");
                 Vector3 origin = new Vector3(1000, 0, 1000);
+                var source = new GameObject("Check Light").AddComponent<LightSource>();
+                source.transform.position = origin;
+                source.radius = 4f;
+                source.intensity = 100f;
+                Check(LightSource.At(origin) == 100f && LightSource.At(origin + Vector3.right * 2) == 50f
+                    && LightSource.At(origin + Vector3.right * 4) == 0f
+                    && LightSource.At(origin + Vector3.right * 5) == 0f, "Light fades from 100 to zero with distance");
+                Check(Mathf.Abs(LightSource.At(origin + Vector3.right * 1.99f)
+                    - LightSource.At(origin + Vector3.right * 2.01f)) < 1f, "Light changes smoothly between nearby points");
+                var secondSource = new GameObject("Check Second Light").AddComponent<LightSource>();
+                secondSource.transform.position = origin;
+                secondSource.radius = 4f;
+                secondSource.intensity = 35f;
+                Check(LightSource.At(origin) == 100f && LightSource.At(origin + Vector3.right * 2) == 67.5f,
+                    "Overlapping sources add their contributions, capped at 100");
+                source.enabled = false;
+                Check(LightSource.At(origin) == 35f, "Disabled source stops contributing immediately");
+                secondSource.gameObject.SetActive(false);
+                Check(LightSource.At(origin) == 0f, "Inactive sources do not illuminate a point");
+                source.enabled = true;
+                source.transform.position += Vector3.right * 10;
+                Check(LightSource.At(origin) == 0f && LightSource.At(source.transform.position) == 100f,
+                    "Moving a source moves its light field without rebuilding anything");
+                Object.DestroyImmediate(source.gameObject);
+                Object.DestroyImmediate(secondSource.gameObject);
                 var player = new GameObject("Check Attacker");
                 player.transform.position = origin;
                 player.AddComponent<Damageable>().ResetHealth();
@@ -94,6 +124,9 @@ namespace RRM.Editor
                 recorder.Observe(new DamageEvent(player, health, BodyPart.Torso,
                     origin + new Vector3(0, 1.15f, -2), Vector3.forward, 45, 3, false));
                 Check(recorder.RecordedHits == 0 && recorder.LastResult == "STANDBY", "Off-camera event has no recording feedback");
+                var recordingLight = new GameObject("Recording Light").AddComponent<LightSource>();
+                recordingLight.transform.position = visible;
+                recordingLight.intensity = 90f;
                 recorder.Observe(new DamageEvent(player, health, BodyPart.Torso, visible, Vector3.forward, 45, 3, false));
                 Check(recorder.RecordedHits == 1 && recorder.LastResult == "REC EVENT", "Visible event is recorded");
 
@@ -127,11 +160,16 @@ namespace RRM.Editor
                 health.Damaged += otherCamera.Observe;
                 try
                 {
+                    recordingLight.intensity = 15f;
                     Check(health.ApplyDamage(player, zone, visible, Vector3.forward, health.Health, 0), "Report receives real fatal DamageEvent");
                     CameraDevice witness = recorder.GetComponent<CameraDevice>();
                     CameraDevice blind = otherCamera.GetComponent<CameraDevice>();
                     Check(witness.Events.Count == 2 && witness.RecordedHits == 2 && witness.DeathRecorded,
                         "Witness retains separate hit events, including the fatal hit exactly once");
+                    Check(Mathf.Abs(witness.Events[0].Clarity - 0.9f) < 0.001f
+                        && Mathf.Abs(witness.Events[1].Clarity - 0.15f) < 0.001f
+                        && recorder.ReportText.Contains("Last event quality: 15%"),
+                        "The same visible event point drops from 90% to 15% quality; a dark death is still witnessed");
                     Check(blind.Events.Count == 0 && !blind.DeathRecorded && !blind.LastEventDistance.HasValue,
                         "The same damage is not copied to a camera facing away");
                     Check(recorder.ReportReady && otherCamera.ReportReady
@@ -144,7 +182,7 @@ namespace RRM.Editor
                     Check(Mathf.Abs(witness.LastEventDistance.Value - 2f) < 0.001f, "Distance is captured at the event, not recomputed later");
                 }
                 finally { health.Damaged -= recorder.Observe; health.Damaged -= otherCamera.Observe; }
-                Debug.Log("RRM CHECKS PASSED: damage validation, phases, deduplication, body parts, death, recording, occlusion.");
+                Debug.Log("RRM CHECKS PASSED: smooth/additive/bounded light, moving/disabled sources, damage validation, phases, deduplication, body parts, death, recording, occlusion.");
             }
             finally
             {
@@ -179,7 +217,7 @@ namespace RRM.Editor
         }
     }
 
-    public static class CombatPrototypePlayCheck
+    public static partial class CombatPrototypePlayCheck
     {
         private const string Active = "RRM.PlayCheck.Active";
         private static Keyboard keyboard;
@@ -257,6 +295,94 @@ namespace RRM.Editor
             RunAndExit();
         }
 
+        public static void RunHeightAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.HeightOnly", true);
+            RunAndExit();
+        }
+
+        public static void RunControlsAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.ControlsOnly", true);
+            RunAndExit();
+        }
+
+        public static void RunLocomotionAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.LocomotionOnly", true);
+            RunAndExit();
+        }
+
+        public static void RunStarterCoverAndExit()
+        {
+            CombatPrototypeBuilder.SetStarterCoverHeight();
+            SessionState.SetBool("RRM.PlayCheck.StarterCover", true);
+            RunAndExit();
+        }
+
+        public static void RunEnemyAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.EnemyOnly", true);
+            RunAndExit();
+        }
+
+        public static void RestoreCombinedAndRun()
+        {
+            CombatPrototypeBuilder.RestoreTwoRoomPrototype();
+            RunCombinedAndExit();
+        }
+
+        public static void RunCombinedAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.Combined", true);
+            RunRangeAndExit();
+        }
+
+        private static bool combined;
+        private static bool heightOnly;
+        private static bool controlsOnly;
+        private static Damageable playerHealth;
+        private static int enemyHits;
+        private static float enemyHitTime;
+        private static Quaternion enemyFacing;
+        private static int leftHandClicks, rightHandClicks, handInputFrame, handClickBaseline;
+        private static bool leftHandHolding, rightHandHolding;
+        private static int movementCase;
+        private static Vector3 expectedMovement;
+        private static float standingCapsuleHeight, jumpVelocity;
+        private static bool spaceTapReleased;
+        private static GameObject stanceCeiling;
+        private static readonly (Vector2 input, Key[] keys)[] BodyMoves =
+        {
+            (Vector2.down, new[] { Key.S }),
+            (Vector2.left, new[] { Key.A }),
+            (Vector2.right, new[] { Key.D }),
+            (new Vector2(1, 1).normalized, new[] { Key.W, Key.D })
+        };
+        private static Vector3 lightSourcePosition;
+
+        public static void RetuneLightsAndRun()
+        {
+            CombatPrototypeBuilder.RetuneLightTestLayout();
+            PrepareEvidenceAndRun();
+        }
+
+        public static void PrepareEvidenceAndRun()
+        {
+            CombatPrototypeBuilder.AddEvidenceTestAreas();
+            CombatPrototypeBuilder.AddEvidenceTestAreas(); // Verify repeat setup does not duplicate sources.
+            RunCombinedAndExit();
+        }
+
+        public static void RunEvidenceAndExit()
+        {
+            SessionState.SetBool("RRM.PlayCheck.EvidenceOnly", true);
+            RunAndExit();
+        }
+
+        private static BloodEvent evidenceMark;
+        private static Color32[] evidenceFrame;
+
         public static void Run()
         {
             foreach (string name in new[] { "live-ui.png", "combat-blood-ui.png", "handheld-aim-ui.png",
@@ -268,6 +394,7 @@ namespace RRM.Editor
                 if (File.Exists(screenshot)) File.Delete(screenshot);
             }
             EditorSceneManager.OpenScene(SessionState.GetBool("RRM.PlayCheck.RangeOnly", false)
+                && !SessionState.GetBool("RRM.PlayCheck.Combined", false)
                 ? CombatPrototypeBuilder.RangeScenePath : CombatPrototypeBuilder.ScenePath);
             CombatPrototypeTests.Run();
             SessionState.SetBool(Active, true);
@@ -323,6 +450,22 @@ namespace RRM.Editor
                 SessionState.SetBool("RRM.PlayCheck.ReportsOnly", false);
                 if (SessionState.GetBool("RRM.PlayCheck.RangeOnly", false)) step = 80;
                 SessionState.SetBool("RRM.PlayCheck.RangeOnly", false);
+                if (SessionState.GetBool("RRM.PlayCheck.EvidenceOnly", false)) step = 100;
+                SessionState.SetBool("RRM.PlayCheck.EvidenceOnly", false);
+                combined = SessionState.GetBool("RRM.PlayCheck.Combined", false);
+                SessionState.SetBool("RRM.PlayCheck.Combined", false);
+                heightOnly = SessionState.GetBool("RRM.PlayCheck.HeightOnly", false);
+                SessionState.SetBool("RRM.PlayCheck.HeightOnly", false);
+                if (heightOnly) step = 33;
+                controlsOnly = SessionState.GetBool("RRM.PlayCheck.ControlsOnly", false);
+                SessionState.SetBool("RRM.PlayCheck.ControlsOnly", false);
+                if (controlsOnly || combined) step = 120;
+                if (SessionState.GetBool("RRM.PlayCheck.LocomotionOnly", false)) step = 200;
+                SessionState.SetBool("RRM.PlayCheck.LocomotionOnly", false);
+                if (SessionState.GetBool("RRM.PlayCheck.EnemyOnly", false)) step = 300;
+                SessionState.SetBool("RRM.PlayCheck.EnemyOnly", false);
+                if (SessionState.GetBool("RRM.PlayCheck.StarterCover", false)) step = 500;
+                SessionState.SetBool("RRM.PlayCheck.StarterCover", false);
                 failed = false;
                 hitTime = -1f;
                 damageEvents = 0;
@@ -359,10 +502,14 @@ namespace RRM.Editor
             {
                 if (!Application.isPlaying) return;
                 if (failed) throw new InvalidOperationException("Runtime logged an error; see the preceding entry.");
-                if (EditorApplication.timeSinceStartup - started > 90)
-                    throw new TimeoutException($"Play check timed out at step {step}, simulated age {Time.time - since:F2}, player {player.position}, return point {beforePlayer}.");
+                // Native captures can make simulated frames much slower than wall time in the Editor.
+                if (EditorApplication.timeSinceStartup - started > (combined ? 240 : step >= 200 ? 180 : 90))
+                    throw new TimeoutException($"Play check timed out at step {step}, simulated age {Time.time - since:F2}, "
+                        + $"player {(player ? player.position.ToString() : "RELOADING")}, return point {beforePlayer}.");
                 float age = Time.time - since;
                 EditorApplication.QueuePlayerLoopUpdate();
+                if (SessionState.GetInt("RRM.PlayCheck.Lamps", 0) != 0) { TickLamps(age); return; }
+                if (step >= 500) { TickStarterCover(age); return; }
                 if (step == 10)
                     Require(dummyBody.position.z >= -6.55f, "Dummy never crosses the south wall during the impulse");
                 if (step == 4 && hitTime >= 0f && !bloodCaptured && Time.time - hitTime > 0.12f)
@@ -442,7 +589,7 @@ namespace RRM.Editor
                     recorder = Object.FindFirstObjectByType<CameraRecorder>();
                     camera = Camera.main;
                     Require(dummy.GetComponent<PlayerController>().autonomousMovement, "Dummy uses autonomous movement");
-                    Require(!dummy.GetComponent<MeleeAttack>(), "Dummy movement does not add combat mechanics");
+                    Require(dummy.GetComponent<MeleeAttack>(), "Dummy reuses the existing melee component");
                     Require(recorder.liveCamera && recorder.liveCamera != camera
                         && recorder.liveCamera.transform == recorder.lens
                         && recorder.lens.IsChildOf(player.transform), "Live camera is mounted in the player's hand");
@@ -640,9 +787,8 @@ namespace RRM.Editor
                 else if (step == 20 && age > 0.2f)
                 {
                     Vector3 angles = recorder.transform.localEulerAngles;
-                    Require(Mathf.Abs(Mathf.DeltaAngle(angles.x, recorder.maxPitch)) < 0.1f
-                        && Mathf.Abs(Mathf.DeltaAngle(angles.y, recorder.maxYaw)) < 0.1f,
-                        "Large mouse deltas clamp downward pitch and right yaw");
+                    Require(Mathf.Abs(Mathf.DeltaAngle(angles.x, recorder.maxPitch)) < 0.1f,
+                        "Large mouse deltas clamp downward pitch while yaw remains unrestricted");
                     ReadLiveFrame("handheld-down-limit.png");
                     AimCamera(new Vector2(-100000f, 100000f));
                     Next();
@@ -650,9 +796,8 @@ namespace RRM.Editor
                 else if (step == 21 && age > 0.2f)
                 {
                     Vector3 angles = recorder.transform.localEulerAngles;
-                    Require(Mathf.Abs(Mathf.DeltaAngle(angles.x, recorder.minPitch)) < 0.1f
-                        && Mathf.Abs(Mathf.DeltaAngle(angles.y, -recorder.maxYaw)) < 0.1f,
-                        "Large mouse deltas clamp upward pitch and left yaw without wrapping");
+                    Require(Mathf.Abs(Mathf.DeltaAngle(angles.x, recorder.minPitch)) < 0.1f,
+                        "Large mouse deltas clamp upward pitch while yaw remains unrestricted");
                     ReadLiveFrame("handheld-up-limit.png");
                     // Compare rendered transforms: Rigidbody.position is ahead of interpolation.
                     beforePlayer = player.transform.position;
@@ -768,6 +913,9 @@ namespace RRM.Editor
                 }
                 else if (step == 33 && age > 0.6f)
                 {
+                    Require(SceneManager.GetActiveScene().path == CombatPrototypeBuilder.ScenePath
+                        && GameObject.Find("Camera Platform") && GameObject.Find("Platform Ramp"),
+                        "Height test uses the existing platform and ramp in CombatPrototype");
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState());
                     player = GameObject.Find("Player").GetComponent<Rigidbody>();
                     dummy = GameObject.Find("Dummy").GetComponent<Damageable>();
@@ -780,7 +928,7 @@ namespace RRM.Editor
                     dummyBody.position = new Vector3(4.4f, 0.02f, 4.8f);
                     player.rotation = dummyBody.rotation = Quaternion.identity;
                     player.linearVelocity = dummyBody.linearVelocity = Vector3.zero;
-                    recorder.transform.localRotation = Quaternion.Euler(8, 0, 0);
+                    recorder.SetViewRotation(Quaternion.Euler(8, 0, 0));
                     AimCamera(Vector2.zero);
                     Next();
                 }
@@ -812,6 +960,14 @@ namespace RRM.Editor
                         "Walking uphill does not change the handheld viewing angle");
                     Require(recorder.CanSee(dummyBody.position + Vector3.up * 1.1f),
                         "The elevated camera now sees the target's torso over the same block");
+                    Vector3 raisedPosition = recorder.transform.position;
+                    try
+                    {
+                        recorder.transform.position -= Vector3.up * travel.y;
+                        Require(!recorder.CanSee(dummyBody.position + Vector3.up * 1.1f),
+                            "At the same horizontal position and angle, lowering the lens hides the torso");
+                    }
+                    finally { recorder.transform.position = raisedPosition; }
                     Color32[] raised = ReadLiveFrame("height-platform-feed.png");
                     RedCenter(raised);
                     int changed = ChangedPixels(groundFeed, raised);
@@ -845,8 +1001,459 @@ namespace RRM.Editor
                         Require(File.Exists(Path.GetFullPath("Verification/height-ground-ui.png"))
                             && File.Exists(Path.GetFullPath("Verification/height-platform-ui.png")), "Both height UI screenshots exist");
                     Debug.Log("RRM HEIGHT CHECK: S descent to floor, camera returns with player, live feed still active.");
+                    if (combined)
+                    {
+                        step = 200;
+                        since = Time.time;
+                        return;
+                    }
+                    if (combined || heightOnly)
+                    {
+                        Finish(true, heightOnly ? "RRM HEIGHT PLAY CHECK PASSED: WASD ascent/descent, stable platform stance, "
+                            + "lens follows player, unchanged aim, real live feed and height-dependent visibility."
+                            : "RRM COMBINED PLAY CHECK PASSED: two-room layout, doorway traversal, cover, report, "
+                            + "real melee, persistent floor/wall marks, native feed pixels, placed inspection, LightLevel, "
+                            + "occlusion, restart, WASD ascent/descent, stable platform stance and height-dependent camera visibility.");
+                        return;
+                    }
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
                     Next();
+                }
+                else if (step == 200 && age > 0.2f)
+                {
+                    StageRange(new Vector3(-6, 0.02f, -4), new Vector3(2.1f, 0.02f, 1.1f));
+                    player.rotation = Quaternion.Euler(0, 90, 0);
+                    player.transform.rotation = player.rotation;
+                    standingCapsuleHeight = player.GetComponent<CapsuleCollider>().height;
+                    mountLocalPosition = recorder.transform.localPosition;
+                    placedTexture = recorder.LiveTexture;
+                    Next();
+                }
+                else if (step == 201 && age > 0.4f)
+                {
+                    Require(player.GetComponent<PlayerController>().IsGrounded, "Standing on floor permits a jump");
+                    beforePlayer = player.position;
+                    beforeLens = recorder.lens.position;
+                    beforeLensRotation = recorder.lens.rotation;
+                    beforeLiveFrame = ReadLiveFrame("movement-standing-feed.png");
+                    Capture("movement-standing.png", 1280, 800);
+                    spaceTapReleased = false;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
+                    Next();
+                }
+                else if (step == 202 && age > 0.06f && !spaceTapReleased)
+                {
+                    Require(player.GetComponent<PlayerController>().IsGrounded,
+                        "Space press waits for tap/hold instead of jumping immediately");
+                    spaceTapReleased = true;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                }
+                else if (step == 202 && age > 0.22f)
+                {
+                    Require(!player.GetComponent<PlayerController>().IsGrounded && player.position.y > beforePlayer.y + 0.25f
+                        && player.linearVelocity.y > 0 && Vector3.ProjectOnPlane(player.position - beforePlayer, Vector3.up).magnitude < 0.03f,
+                        "Short Space release makes a modest standing jump without horizontal drift");
+                    Require(Vector3.Distance(recorder.lens.position - beforeLens, player.transform.position - beforePlayer) < 0.04f
+                        && Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) < 0.1f
+                        && ChangedPixels(beforeLiveFrame, ReadLiveFrame("movement-jump-feed.png")) > 1000,
+                        "Jump raises the actual lens and changes live pixels without steering it");
+                    Capture("movement-jump.png", 1280, 800);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    Next();
+                }
+                else if (step == 203 && age > 0.06f)
+                {
+                    jumpVelocity = player.linearVelocity.y;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
+                    Next();
+                }
+                else if (step == 204 && age > 0.06f)
+                {
+                    Require(player.linearVelocity.y < jumpVelocity - 0.2f && player.position.y < beforePlayer.y + 0.7f,
+                        "A second Space press in the air cannot add another jump");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    Next();
+                }
+                else if (step == 205 && age > 0.85f)
+                {
+                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - beforePlayer.y) < 0.03f,
+                        "An air tap cannot queue a jump; landing returns to the same surface");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
+                    Next();
+                }
+                else if (step == 206 && age > 0.25f)
+                {
+                    CheckStance(true);
+                    Require(Vector3.Distance(player.position, beforePlayer) < 0.03f
+                        && ChangedPixels(beforeLiveFrame, ReadLiveFrame("movement-crouch-feed.png")) > 1000,
+                        "Stationary crouch keeps feet planted and lowers the live viewpoint");
+                    Capture("movement-crouch.png", 1280, 800);
+                    stanceCeiling = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    stanceCeiling.transform.position = player.position + Vector3.up * 1.4f;
+                    stanceCeiling.transform.localScale = new Vector3(1.2f, 0.2f, 1.2f);
+                    Physics.SyncTransforms();
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    Next();
+                }
+                else if (step == 207 && age > 0.2f)
+                {
+                    CheckStance(true);
+                    Require(Vector3.Distance(player.position, beforePlayer) < 0.03f,
+                        "Long Space release neither jumps nor expands the capsule into a low ceiling");
+                    Object.DestroyImmediate(stanceCeiling);
+                    Physics.SyncTransforms();
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
+                    Next();
+                }
+                else if (step == 208 && age > 0.4f)
+                {
+                    CheckStance(true);
+                    beforePlayer = player.position;
+                    Next();
+                }
+                else if (step == 209 && age > 0.4f)
+                {
+                    float speed = Vector3.ProjectOnPlane(player.position - beforePlayer, Vector3.up).magnitude / age;
+                    Require(Mathf.Abs(speed - player.GetComponent<PlayerController>().moveSpeed * 0.5f) < 0.25f,
+                        $"Held Space + W moves at half speed: {speed:F2} m/s");
+                    Debug.Log($"RRM LOCOMOTION SPEED: crouched {speed:F2} m/s at {player.position}.");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
+                    Next();
+                }
+                else if (step == 210 && age > 0.35f)
+                {
+                    CheckStance(false);
+                    float speed = Vector3.ProjectOnPlane(player.linearVelocity, Vector3.up).magnitude;
+                    Require(speed > 2.9f && player.GetComponent<PlayerController>().IsGrounded,
+                        $"Releasing held Space restores normal speed without jumping: {speed:F2} m/s at {player.position}");
+                    Debug.Log($"RRM LOCOMOTION SPEED: standing {speed:F2} m/s at {player.position}.");
+                    StageRange(new Vector3(-7, 0.02f, -4), new Vector3(2.1f, 0.02f, 1.1f), false);
+                    player.rotation = Quaternion.Euler(0, 90, 0);
+                    player.transform.rotation = player.rotation;
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    Next();
+                }
+                else if (step == 211 && age > 0.2f)
+                {
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
+                    AimCamera(Vector2.zero);
+                    Next();
+                }
+                else if (step == 212 && age > 0.35f)
+                {
+                    beforePlayer = player.position;
+                    beforePlayerRotation = player.rotation;
+                    beforeLensRotation = recorder.lens.rotation;
+                    AimCamera(new Vector2(90f / recorder.mouseSensitivity, 0));
+                    spaceTapReleased = false;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
+                    Next();
+                }
+                else if (step == 213 && age > 0.06f && !spaceTapReleased)
+                {
+                    spaceTapReleased = true;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
+                }
+                else if (step == 213 && age > 0.25f)
+                {
+                    Require(player.position.x > beforePlayer.x + 0.4f && player.position.y > beforePlayer.y + 0.3f
+                        && player.linearVelocity.x > 2.9f && !player.GetComponent<PlayerController>().IsGrounded,
+                        "W + Space keeps forward momentum throughout the moving jump");
+                    Require(Quaternion.Angle(player.rotation, beforePlayerRotation) < 0.1f
+                        && Mathf.Abs(Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) - 90f) < 0.1f,
+                        "Hand input turns the camera independently during a moving jump");
+                    beforeLensRotation = recorder.lens.rotation;
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    Next();
+                }
+                else if (step == 214 && age > 1.1f)
+                {
+                    // Allow the motor to recover from the landing contact before measuring full speed.
+                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y) < 0.03f
+                        && player.linearVelocity.x > 2.9f && Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) < 0.1f,
+                        $"After landing: grounded={player.GetComponent<PlayerController>().IsGrounded}, "
+                        + $"position={player.position}, velocity={player.linearVelocity}, "
+                        + $"camera drift={Quaternion.Angle(recorder.lens.rotation, beforeLensRotation):F3}, age={age:F3}");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl));
+                    Next();
+                }
+                else if (step == 215 && age > 0.3f)
+                {
+                    CheckStance(true);
+                    placedDevice = recorder.GetComponent<CameraDevice>();
+                    deviceId = placedDevice.Id;
+                    beforeMount = recorder.transform.position;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl, Key.Q));
+                    Next();
+                }
+                else if (step == 216 && age > 0.2f)
+                {
+                    Require(recorder.IsPlaced && !recorder.LiveTexture && Vector3.Distance(recorder.transform.position, beforeMount) < 0.01f,
+                        "Q places the same camera at crouched hand height");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    Next();
+                }
+                else if (step == 217 && age > 0.3f)
+                {
+                    Require(!player.GetComponent<PlayerController>().IsCrouching && !placedDevice.Owner
+                        && Vector3.Distance(recorder.transform.position, beforeMount) < 0.01f,
+                        "Standing up cannot move a placed camera");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl));
+                    Next();
+                }
+                else if (step == 218 && age > 0.2f)
+                {
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl, Key.E));
+                    Next();
+                }
+                else if (step == 219 && age > 0.2f)
+                {
+                    CheckStance(true);
+                    Require(player.GetComponent<PlayerController>().RightHand.Item?.Source == placedDevice && placedDevice.Id == deviceId,
+                        "Crouched pickup uses the requested lowered hand and preserves camera ID");
+                    Capture("movement-crouch-right-camera.png", 1280, 800);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F1));
+                    Next();
+                }
+                else if (step == 220 && age > 0.3f)
+                {
+                    CheckStance(false);
+                    Require(recorder.ControlsVisible, "F1 still opens the guide with jump/crouch controls");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                    Next();
+                }
+                else if (step == 221 && age > 0.6f)
+                {
+                    player = GameObject.Find("Player").GetComponent<Rigidbody>();
+                    dummy = GameObject.Find("Dummy").GetComponent<Damageable>();
+                    dummyBody = dummy.GetComponent<Rigidbody>();
+                    recorder = Object.FindFirstObjectByType<CameraRecorder>();
+                    camera = Camera.main;
+                    Require(!player.GetComponent<PlayerController>().IsCrouching && !recorder.IsPlaced
+                        && Mathf.Abs(player.GetComponent<CapsuleCollider>().height - standingCapsuleHeight) < 0.001f,
+                        "Scene restart restores standing height and normal held camera");
+                    StageRange(new Vector3(5.5f, 0.92f, -0.5f), new Vector3(2.1f, 0.02f, -3), false);
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    Next();
+                }
+                else if (step == 222 && age > 0.4f)
+                {
+                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - 0.9f) < 0.03f,
+                        "Ground detection works on the existing raised platform, not only y=0");
+                    spaceTapReleased = false;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
+                    Next();
+                }
+                else if (step == 223 && age > 0.06f && !spaceTapReleased)
+                {
+                    spaceTapReleased = true;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                }
+                else if (step == 223 && age > 0.25f)
+                {
+                    Require(player.position.y > 1.2f && !player.GetComponent<PlayerController>().IsGrounded,
+                        "Space also launches from an elevated surface");
+                    Next();
+                }
+                else if (step == 224 && age > 0.9f)
+                {
+                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - 0.9f) < 0.03f
+                        && recorder.LiveTexture && Quaternion.Angle(player.rotation, player.transform.rotation) < 0.1f,
+                        "Elevated jump lands back on the platform with a working feed");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
+                    Next();
+                }
+                else if (step == 225 && age > 0.06f)
+                {
+                    player.GetComponent<PlayerController>().SendMessage("OnApplicationFocus", false);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    Next();
+                }
+                else if (step == 226 && age > 0.3f)
+                {
+                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - 0.9f) < 0.03f,
+                        "Losing focus cancels a pending Space tap; release cannot jump");
+                    Debug.Log("RRM LOCOMOTION CHECK PASSED: standing/moving/elevated Space taps, no air jump, "
+                        + "Space hold crouch without a release jump, Ctrl crouch, half speed and recovery, headroom, "
+                        + "independent live camera, lowered pickup, restart and focus cancellation.");
+                    if (combined)
+                    {
+                        InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                        step = 300;
+                        since = Time.time;
+                    }
+                    else
+                    {
+                        Debug.Log("RRM LOCOMOTION PLAY CHECK PASSED; checking saved starter cover next.");
+                        step = 500;
+                        since = Time.time;
+                    }
+                }
+                else if (step == 300 && age > 0.7f)
+                {
+                    player = GameObject.Find("Player").GetComponent<Rigidbody>();
+                    playerHealth = player.GetComponent<Damageable>();
+                    dummy = GameObject.Find("Dummy").GetComponent<Damageable>();
+                    dummyBody = dummy.GetComponent<Rigidbody>();
+                    recorder = Object.FindFirstObjectByType<CameraRecorder>();
+                    camera = Camera.main;
+                    enemyHits = damageEvents = 0;
+                    dummy.Damaged -= ObserveHit;
+                    dummy.Damaged += ObserveHit;
+                    playerHealth.Damaged += ObserveEnemyHit;
+                    Require(playerHealth.Health == 90 && dummy.Health == 90
+                        && dummy.GetComponent<PlayerController>().opponent == playerHealth
+                        && dummy.GetComponent<PlayerController>().State == PlayerController.EnemyState.Idle,
+                        "Existing scene starts with a distant idle enemy and two healthy actors");
+                    Require(Array.IndexOf(recorder.subjects, playerHealth) >= 0 && Array.IndexOf(recorder.subjects, dummy) >= 0
+                        && dummy.GetComponent<MeleeAttack>().weaponPivot.GetComponentInChildren<Hurtbox>().part == BodyPart.RightArm,
+                        "Recorder observes both actors; enemy strikes with its existing arm");
+                    StageRange(new Vector3(-1, 0.02f, 1), new Vector3(1, 0.02f, 1));
+                    dummy.GetComponent<PlayerController>().enabled = true;
+                    beforeDummy = dummyBody.position;
+                    Next();
+                }
+                else if (step == 301 && age > 1f)
+                {
+                    Require(dummy.GetComponent<PlayerController>().State == PlayerController.EnemyState.Idle
+                        && Vector3.Distance(beforeDummy, dummyBody.position) < 0.05f && enemyHits == 0,
+                        "Solid divider prevents detection, approach and attacks");
+                    StageRange(new Vector3(2.1f, 0.02f, -4), new Vector3(2.1f, 0.02f, 0));
+                    dummy.GetComponent<PlayerController>().enabled = true;
+                    beforeDummy = dummyBody.position;
+                    Next();
+                }
+                else if (step == 302 && age > 1f)
+                {
+                    Require(dummy.GetComponent<PlayerController>().State == PlayerController.EnemyState.Approach
+                        && Vector3.Distance(beforeDummy, dummyBody.position) > 0.7f
+                        && dummyBody.linearVelocity.magnitude < 1.5f && enemyHits == 0,
+                        "Visible nearby enemy approaches slowly with the existing Rigidbody");
+                    ReadLiveFrame("enemy-approach-feed.png");
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q, Key.W));
+                    Next();
+                }
+                else if (step == 303 && (dummy.GetComponent<MeleeAttack>().Phase == MeleeAttack.AttackPhase.Windup || age > 4f))
+                {
+                    Require(dummy.GetComponent<MeleeAttack>().Phase == MeleeAttack.AttackPhase.Windup && enemyHits == 0,
+                        "Enemy commits to a windup before it can hurt the player");
+                    placedDevice = recorder.GetComponent<CameraDevice>();
+                    deviceId = placedDevice.Id;
+                    Require(placedDevice.State == CameraDeviceState.Placed && recorder.IsRecording && !recorder.LiveTexture,
+                        "Q places one camera and hides live feed while logical recording continues");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    enemyFacing = dummyBody.rotation;
+                    beforePlayer = player.position;
+                    Next();
+                }
+                else if (step == 304 && age > 0.12f)
+                {
+                    var feedback = dummy.GetComponent<HitFeedback>();
+                    var properties = new MaterialPropertyBlock();
+                    feedback.bodyRenderers[0].GetPropertyBlock(properties);
+                    Require(properties.GetColor("_BaseColor").g > 0.6f && enemyHits == 0,
+                        "Windup is visibly amber, not an invisible timer");
+                    Capture("enemy-windup.png", 1280, 800);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.S));
+                    Next();
+                }
+                else if (step == 305 && (dummy.GetComponent<MeleeAttack>().Phase == MeleeAttack.AttackPhase.Recovery || age > 2f))
+                {
+                    Require(dummy.GetComponent<MeleeAttack>().Phase == MeleeAttack.AttackPhase.Recovery
+                        && enemyHits == 0 && playerHealth.Health == 90
+                        && Vector3.Distance(beforePlayer, player.position) > 0.7f
+                        && Quaternion.Angle(enemyFacing, dummyBody.rotation) < 1f,
+                        "S escapes the committed swing; enemy cannot track or damage the retreating player");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    // Arrange counter range without interrupting the enemy's actual recovery timer.
+                    player.position = dummyBody.position + Vector3.back * 1.15f;
+                    player.rotation = Quaternion.identity;
+                    player.transform.SetPositionAndRotation(player.position, player.rotation);
+                    player.linearVelocity = Vector3.zero;
+                    Physics.SyncTransforms();
+                    AimCamera(Vector2.zero, true);
+                    Next();
+                }
+                else if (step == 306 && (damageEvents > 0 || age > 1f))
+                {
+                    Require(damageEvents == 1 && dummy.Health < 90 && enemyHits == 0
+                        && dummy.GetComponent<MeleeAttack>().Phase == MeleeAttack.AttackPhase.Recovery,
+                        "A real mouse counterstrike damages the enemy during its recovery");
+                    Require(placedDevice.RecordedHits == 1 && placedDevice.Events[0].Damage.Target == dummy,
+                        "Placed camera witnesses the player's counterstrike without restoring its feed");
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    Next();
+                }
+                else if (step == 307 && age > 1f)
+                {
+                    Require(enemyHits == 0, "Recovery cannot deliver another hit");
+                    StageRange(new Vector3(2.1f, 0.02f, -2), new Vector3(2.1f, 0.02f, -1), false);
+                    dummy.GetComponent<PlayerController>().enabled = true;
+                    beforeLens = recorder.transform.position;
+                    beforeLensRotation = recorder.transform.rotation;
+                    Next();
+                }
+                else if (step == 308 && ((enemyHits > 0 && Time.time - enemyHitTime > 0.12f) || age > 3f))
+                {
+                    Require(enemyHits == 1 && playerHealth.Health > 0 && playerHealth.Health <= 48,
+                        $"One real enemy hit is costly but survivable: HP={playerHealth.Health}, hits={enemyHits}");
+                    Require(placedDevice.Events[placedDevice.Events.Count - 1].Damage.Target == playerHealth,
+                        "The same placed device records damage to the player as well as the Dummy");
+                    Capture("enemy-player-hit.png", 1280, 800);
+                    Next();
+                }
+                else if (step == 309 && (playerHealth.IsDead || age > 8f))
+                {
+                    Require(playerHealth.IsDead && enemyHits <= 3 && recorder.ReportReady && placedDevice.DeathRecorded,
+                        $"Standing in range is lethal and the placed camera witnesses death: HP={playerHealth.Health}, hits={enemyHits}");
+                    Require(placedDevice.Events[placedDevice.Events.Count - 1].Damage.IsFatal
+                        && placedDevice.Events[placedDevice.Events.Count - 1].Damage.Target == playerHealth
+                        && placedDevice.RecordedHits == enemyHits + 1 && placedDevice.Id == deviceId
+                        && Vector3.Distance(beforeLens, recorder.transform.position) < 0.001f
+                        && Quaternion.Angle(beforeLensRotation, recorder.transform.rotation) < 0.1f && !recorder.LiveTexture,
+                        "Fatal event retains correct actor/ID, fixed camera pose and private recording");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
+                    AimCamera(Vector2.zero, true);
+                    Next();
+                }
+                else if (step == 310 && age > 1.6f)
+                {
+                    Require(player.GetComponent<PlayerController>().DeathMessage.Contains("YOU DIED")
+                        && !player.GetComponent<MeleeAttack>().IsBusy && !player.GetComponent<MeleeAttack>().TryAttack()
+                        && !dummy.GetComponent<MeleeAttack>().IsBusy
+                        && Vector3.Dot(player.transform.up, Vector3.up) < 0.9f,
+                        $"Dead player falls, cannot attack, shows restart text and is no longer targeted: "
+                        + $"text={player.GetComponent<PlayerController>().DeathMessage}, enemy={dummy.GetComponent<MeleeAttack>().Phase}, up={player.transform.up}");
+                    foreach (Hurtbox zone in player.GetComponentsInChildren<Hurtbox>())
+                        Require(!zone.GetComponent<Collider>().enabled, "Dead player's hurtboxes no longer accept contact");
+                    Capture("enemy-player-death.png", 1280, 800);
+                    if (!Application.isBatchMode)
+                        ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/enemy-death-ui.png"));
+                    Next();
+                }
+                else if (step == 311 && age > 0.2f)
+                {
+                    playerHealth.Damaged -= ObserveEnemyHit;
+                    recorder.enabled = false;
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                    Next();
+                }
+                else if (step == 312 && age > 0.8f)
+                {
+                    var freshPlayer = GameObject.Find("Player").GetComponent<PlayerController>();
+                    var freshCamera = Object.FindFirstObjectByType<CameraRecorder>();
+                    Require(freshPlayer.GetComponent<Damageable>().Health == 90 && freshPlayer.DeathMessage.Length == 0
+                        && GameObject.Find("Dummy").GetComponent<Damageable>().Health == 90
+                        && freshCamera.LiveTexture && freshCamera.RecordedHits == 0
+                        && Object.FindObjectsByType<CameraDevice>().Length == 1
+                        && GameObject.Find("Low Cover") && GameObject.Find("High Cover") && GameObject.Find("Camera Platform"),
+                        "R restarts both actors and one held camera, even with its old recorder disabled; both rooms survive");
+                    Finish(true, combined ? "RRM COMBINED PLAY CHECK PASSED: hands, melee, rooms, cover, recording, evidence, light, "
+                        + "height, jump/crouch, actual feed pixels AND dangerous enemy, dodge, counter, player death and restart."
+                        : "RRM ENEMY PLAY CHECK PASSED: idle/occlusion, slow approach, readable windup, real WASD dodge, "
+                        + "mouse counter in recovery, real enemy hits/blood/death, placed recording of both actors and restart.");
                 }
                 else if (step == 40 && age > 0.6f)
                 {
@@ -881,7 +1488,7 @@ namespace RRM.Editor
                     placedTexture = recorder.LiveTexture;
                     // F unlocks facing immediately; measure the original angle before pressing it.
                     beforePlayerRotation = player.rotation;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
                     Next();
                 }
                 else if (step == 42 && age > 0.1f)
@@ -936,7 +1543,7 @@ namespace RRM.Editor
                     placedRecordings = recorder.RecordedHits;
                     ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/passive-recording-ui.png"));
                     Debug.Log("RRM PASSIVE CHECK: F hides feed, releases texture and stops rendering; fixed recorder receives damage privately while player and Dummy move.");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
                     Next();
                 }
                 else if (step == 44 && age > 0.2f)
@@ -1026,7 +1633,7 @@ namespace RRM.Editor
                     }
                     else
                     {
-                        InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F));
+                        InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
                         Next();
                     }
                 }
@@ -1080,7 +1687,7 @@ namespace RRM.Editor
                     var device = recorder.GetComponent<CameraDevice>();
                     Hurtbox torso = Array.Find(dummy.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
                     Vector3 point = torso.transform.position;
-                    recorder.transform.LookAt(point);
+                    recorder.SetViewRotation(Quaternion.LookRotation(point - recorder.transform.position));
                     Physics.SyncTransforms();
                     Require(recorder.CanSee(point), "Report setup frames the damage point");
                     bool seen = step == 56 || step == 68;
@@ -1095,7 +1702,7 @@ namespace RRM.Editor
                         Require(device.Events.Count == 1, "An inactive CameraDevice cannot witness damage");
                         device.enabled = true;
                     }
-                    if (!seen) recorder.transform.Rotate(0, 180, 0, Space.World);
+                    if (!seen) recorder.SetViewRotation(Quaternion.Euler(0, 180, 0) * recorder.transform.rotation);
                     if (placed) Require(device.TryPlace(player.GetComponent<PlayerController>()), "Report camera is placed before the fatal event");
                     Require(recorder.CanSee(point) == seen, "Fatal visibility matches the report case");
                     Require(dummy.ApplyDamage(player.gameObject, torso, point, Vector3.forward, dummy.Health, 0),
@@ -1131,48 +1738,560 @@ namespace RRM.Editor
                         Next();
                     }
                 }
+                else if (step == 120 && age > 0.4f)
+                {
+                    leftHandClicks = rightHandClicks = 0;
+                    leftHandHolding = rightHandHolding = false;
+                    handInputFrame = -1;
+                    InputSystem.onAfterUpdate += CountHandClicks;
+                    initialHandheldRotation = recorder.transform.localRotation;
+                    StageRange(new Vector3(-6, 0.02f, -4), new Vector3(-7.2f, 0.02f, -4));
+                    player.rotation = Quaternion.Euler(0, 90, 0);
+                    player.transform.rotation = player.rotation;
+                    recorder.SetViewRotation(Quaternion.Euler(8, 90, 0));
+                    mountLocalPosition = recorder.transform.localPosition;
+                    placedTexture = recorder.LiveTexture;
+                    Next();
+                }
+                else if (step == 121 && age > 0.3f)
+                {
+                    var controller = player.GetComponent<PlayerController>();
+                    Require(controller.RightHand.Item?.Source == player.GetComponent<MeleeAttack>()
+                        && controller.LeftHand.State == HandState.HoldingItem
+                        && controller.LeftHand.Item.Source == recorder.GetComponent<CameraDevice>()
+                        && controller.HandHolding(controller.HeldCamera) == controller.LeftHand,
+                        "The camera starts in the left hand; the existing weapon occupies the right hand");
+                    CaptureHandLayout(HandSide.Left);
+                    Require(leftHandClicks == 1 && rightHandClicks == 0
+                        && leftHandHolding && !rightHandHolding,
+                        $"LMB click/hold: right {rightHandClicks}/{rightHandHolding}, left {leftHandClicks}/{leftHandHolding}");
+                    controller.enabled = false;
+                    Require(!controller.LeftHand.IsHoldActive && !controller.LeftHand.WasClickedThisFrame
+                        && !recorder.IsAiming, "Disabled holder cannot issue hand actions or aim the camera");
+                    controller.enabled = true;
+                    beforePlayerRotation = player.rotation;
+                    beforeLiveFrame = ReadLiveFrame("controls-forward-feed.png");
+                    AimCamera(new Vector2(180f / recorder.mouseSensitivity, 0));
+                    Next();
+                }
+                else if (step == 122 && age > 0.2f)
+                {
+                    Require(Quaternion.Angle(player.rotation, beforePlayerRotation) < 0.1f,
+                        "LMB turns only the left-hand camera, never the idle character");
+                    Require(Vector3.Dot(player.transform.forward,
+                        Vector3.ProjectOnPlane(recorder.lens.forward, Vector3.up).normalized) < -0.99f,
+                        "Mouse drag can aim the handheld fully behind the body");
+                    var backward = ReadLiveFrame("controls-backward-feed.png");
+                    RedCenter(backward);
+                    Require(ChangedPixels(beforeLiveFrame, backward) > 3000
+                        && recorder.CanSee(dummyBody.position + Vector3.up * 1.05f),
+                        "Turning backward changes the real feed and reveals the target behind Player");
+                    beforeLiveFrame = backward;
+                    beforePlayer = player.transform.position;
+                    beforeMount = recorder.transform.position;
+                    beforeLensRotation = recorder.transform.rotation;
+                    AimCamera(Vector2.zero);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
+                    Next();
+                }
+                else if (step == 123 && age > 0.6f)
+                {
+                    Require(leftHandClicks == 1 && rightHandClicks == 0 && !player.GetComponent<MeleeAttack>().IsBusy,
+                        "A long camera hold never repeats its click action");
+                    Vector3 travel = player.transform.position - beforePlayer;
+                    Require(travel.x > 0.8f && Mathf.Abs(travel.z) < 0.05f,
+                        $"W moves along the east-facing body, not world north or the backward camera: {travel}");
+                    Require(Quaternion.Angle(player.rotation, beforePlayerRotation) < 0.1f
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f
+                        && Vector3.Distance(recorder.transform.position - beforeMount, travel) < 0.02f,
+                        "Body advances while the backward lens follows position without changing direction");
+                    Require(ChangedPixels(beforeLiveFrame, ReadLiveFrame("controls-walking-backward-feed.png")) > 1000,
+                        "The same live feed continues updating during body-relative movement");
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/controls-backward-walk-ui.png"));
+                    beforePlayer = player.transform.position;
+                    InputSystem.QueueStateEvent(mouse, new MouseState
+                        { position = camera.WorldToScreenPoint(player.position + Vector3.right * 5f) });
+                    Next();
+                }
+                else if (step == 124 && age > 0.3f)
+                {
+                    Require(!leftHandHolding
+                        && leftHandClicks == 1, "Releasing LMB ends hold without issuing another click");
+                    Require(!recorder.IsAiming && player.transform.position.x - beforePlayer.x > 0.4f
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f
+                        && Quaternion.Angle(player.rotation, beforePlayerRotation) < 0.1f,
+                        "Releasing the camera hand changes neither camera direction nor W movement");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    AimCamera(Vector2.zero);
+                    Next();
+                }
+                else if (step == 125 && age > 0.2f)
+                {
+                    AimCamera(new Vector2(0, -100000));
+                    Next();
+                }
+                else if (step == 126 && age > 0.2f)
+                {
+                    Require(Mathf.Abs(Mathf.DeltaAngle(recorder.transform.eulerAngles.x, recorder.maxPitch)) < 0.1f,
+                        "Body-relative camera still limits downward pitch");
+                    AimCamera(new Vector2(0, 100000));
+                    Next();
+                }
+                else if (step == 127 && age > 0.2f)
+                {
+                    Require(Mathf.Abs(Mathf.DeltaAngle(recorder.transform.eulerAngles.x, recorder.minPitch)) < 0.1f,
+                        "Body-relative camera still limits upward pitch");
+                    step = 128;
+                    since = Time.time;
+                }
+                else if (step == 128 && age > 0.2f)
+                {
+                    StageRange(new Vector3(-4.8f, 0.02f, -3.9f), new Vector3(-7.2f, 0.02f, -4));
+                    player.rotation = Quaternion.identity;
+                    player.transform.rotation = player.rotation;
+                    recorder.SetViewRotation(Quaternion.Euler(8, 180, 0));
+                    beforeLiveFrame = ReadLiveFrame("controls-rear-north-feed.png");
+                    AimAt(player.position + Vector3.right * 4f);
+                    Next();
+                }
+                else if (step == 129 && age > 0.6f)
+                {
+                    Require(Vector3.Dot(player.transform.forward, Vector3.right) > 0.99f
+                        && !recorder.IsAiming, "Free mouse turns the idle body from north to east");
+                    Require(Vector3.Dot(Vector3.ProjectOnPlane(recorder.lens.forward, Vector3.up).normalized,
+                        Vector3.left) > 0.99f && Mathf.Abs(Mathf.DeltaAngle(recorder.transform.localEulerAngles.y, 180f)) < 0.1f,
+                        "A backward camera turns with the body and now looks west, still behind Player");
+                    Require(ChangedPixels(beforeLiveFrame, ReadLiveFrame("controls-rear-east-feed.png")) > 1000,
+                        "Body turning changes the real rear-facing live image");
+                    beforePlayer = player.position;
+                    beforeLensRotation = recorder.transform.rotation;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
+                    step = 1291;
+                    since = Time.time;
+                }
+                else if (step == 1291 && age > 0.6f)
+                {
+                    Vector3 travel = player.position - beforePlayer;
+                    Require(travel.x > 0.8f && Mathf.Abs(travel.z) < 0.06f
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 1f,
+                        "After a mouse turn, W moves east while the released camera keeps looking west");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    movementCase = 0;
+                    step = 130;
+                    since = Time.time;
+                }
+                else if (step == 130 && age > 0.2f)
+                {
+                    StageRange(new Vector3(-4.8f, 0.02f, -3.9f), new Vector3(-7.2f, 0.02f, 4));
+                    player.rotation = Quaternion.Euler(0, 90, 0);
+                    player.transform.rotation = player.rotation;
+                    recorder.SetViewRotation(Quaternion.Euler(8, 270, 0));
+                    Vector2 input = BodyMoves[movementCase].input;
+                    expectedMovement = player.rotation * new Vector3(input.x, 0, input.y);
+                    Next();
+                }
+                else if (step == 131 && age > 0.25f)
+                {
+                    beforePlayer = player.position;
+                    beforePlayerRotation = player.rotation;
+                    beforeLensRotation = recorder.transform.rotation;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(BodyMoves[movementCase].keys));
+                    Next();
+                }
+                else if (step == 132 && age > 0.65f)
+                {
+                    Vector3 travel = Vector3.ProjectOnPlane(player.position - beforePlayer, Vector3.up);
+                    float forward = Vector3.Dot(travel, expectedMovement);
+                    Require(forward > 0.5f && (travel - expectedMovement * forward).magnitude < 0.08f,
+                        $"Body-relative {BodyMoves[movementCase].keys[0]} movement: {travel}, expected {expectedMovement}");
+                    Require(Quaternion.Angle(player.rotation, beforePlayerRotation) < 0.1f
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f
+                        && Vector3.Distance(recorder.transform.localPosition, mountLocalPosition) < 0.001f,
+                        "Backpedal, strafe and diagonal input do not rotate the body or the held camera");
+                    beforePlayerRotation = player.rotation;
+                    Next();
+                }
+                else if (step == 133 && age > 0.3f)
+                {
+                    Require(Quaternion.Angle(player.rotation, beforePlayerRotation) < 0.5f
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f,
+                        $"Holding {BodyMoves[movementCase].keys[0]} does not auto-turn: body {Quaternion.Angle(player.rotation, beforePlayerRotation):F3}, camera {Quaternion.Angle(recorder.transform.rotation, beforeLensRotation):F3}");
+                    Debug.Log("RRM BODY CONTROL: " + BodyMoves[movementCase].keys[0] + ", direction " + expectedMovement
+                        + ", no keyboard auto-turn, camera angle retained.");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    movementCase++;
+                    step = movementCase < BodyMoves.Length ? 130 : 134;
+                    since = Time.time;
+                }
+                else if (step == 134 && age > 0.3f)
+                {
+                    Require(recorder.LiveTexture == placedTexture, "Body and camera turning reuse the same live texture");
+                    placedDevice = recorder.GetComponent<CameraDevice>();
+                    deviceId = placedDevice.Id;
+                    beforeMount = recorder.transform.position;
+                    beforeLensRotation = recorder.transform.rotation;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
+                    Next();
+                }
+                else if (step == 135 && age > 0.2f)
+                {
+                    var controller = player.GetComponent<PlayerController>();
+                    Require(controller.RightHand.Item?.Source == player.GetComponent<MeleeAttack>()
+                        && controller.LeftHand.State == HandState.Empty && !controller.HeldCamera
+                        && controller.HandHolding(placedDevice) == null,
+                        "Q clears the left hand without changing the device ID or creating an item");
+                    Require(recorder.IsPlaced && recorder.IsRecording && !recorder.LiveTexture
+                        && Vector3.Distance(recorder.transform.position, beforeMount) < 0.001f
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f,
+                        "Placing the independently aimed camera keeps its exact pose and passive recording");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    AimCamera(new Vector2(1000, 1000));
+                    Next();
+                }
+                else if (step == 136 && age > 0.2f)
+                {
+                    Require(leftHandHolding && !recorder.IsAiming
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f,
+                        "Empty left-hand hold cannot steer the placed camera");
+                    CheckRejectedHandPickup();
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.E));
+                    Next();
+                }
+                else if (step == 137 && age > 0.3f)
+                {
+                    Require(!recorder.IsPlaced && recorder.LiveTexture && placedDevice.Id == deviceId
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f,
+                        "Pickup restores the same camera and retains its independently chosen angle");
+                    Require(player.GetComponent<PlayerController>().RightHand.Item.Source == placedDevice,
+                        "Pickup restores the camera's right-hand item context");
+                    CaptureHandLayout(HandSide.Right);
+                    StageRange(new Vector3(2.1f, 0.02f, -2), new Vector3(2.1f, 0.02f, -0.65f), false);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    step = 140;
+                    since = Time.time;
+                }
+                else if (step == 140 && age > 0.2f)
+                {
+                    handClickBaseline = leftHandClicks;
+                    beforeLensRotation = recorder.transform.rotation;
+                    InputSystem.QueueStateEvent(mouse, new MouseState { buttons = 1, delta = new Vector2(1000, 1000) });
+                    Next();
+                }
+                else if (step == 141 && age > 0.3f)
+                {
+                    var controller = player.GetComponent<PlayerController>();
+                    Require(leftHandClicks == handClickBaseline + 1 && leftHandHolding
+                        && !rightHandHolding && controller.LeftHand.Item?.Source == player.GetComponent<MeleeAttack>()
+                        && !recorder.IsAiming && player.GetComponent<MeleeAttack>().IsBusy
+                        && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f,
+                        "LMB strikes with the transferred weapon without aiming the right-hand camera");
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    Next();
+                }
+                else if (step == 142 && age > 0.8f)
+                {
+                    Require(!leftHandHolding && leftHandClicks == handClickBaseline + 1,
+                        "Left-hand release ends its hold without repeating click");
+                    Require(damageEvents == 1 && dummy.Health < 90 && dummy.GetComponent<BloodEvidence>().Marks.Count == 1
+                        && recorder.RecordedHits == 1, "Transferred left-hand weapon hits, emits blood and records one real event");
+                    Debug.Log("RRM HAND TRANSFER: left-hand mouse hit produced damage, blood and a right-camera recording.");
+                    beforeLiveFrame = ReadLiveFrame("hands-right-before-feed.png");
+                    rightHandClicks = 0;
+                    AimCamera(Vector2.zero);
+                    Next();
+                }
+                else if (step == 143 && age > 0.2f)
+                {
+                    AimCamera(new Vector2(60f / recorder.mouseSensitivity, 0));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
+                    Next();
+                }
+                else if (step == 144 && age > 0.3f)
+                {
+                    var controller = player.GetComponent<PlayerController>();
+                    Require(rightHandHolding && rightHandClicks == 1 && !player.GetComponent<MeleeAttack>().IsBusy
+                        && Mathf.Abs(Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) - 60f) < 0.1f
+                        && ChangedPixels(beforeLiveFrame, ReadLiveFrame("hands-right-aim-feed.png")) > 1000,
+                        "RMB aims the same camera in the right hand, changes real feed, and never attacks");
+                    Require(controller.RightHand.Item.Source == placedDevice
+                        && controller.LeftHand.Item?.Source == player.GetComponent<MeleeAttack>(),
+                        "Q cannot steal or duplicate the camera already held by the other hand");
+                    beforePlayer = player.position;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.RightArrow, Key.F));
+                    Next();
+                }
+                else if (step == 145 && age > 0.4f)
+                {
+                    Require(Vector3.ProjectOnPlane(player.position - beforePlayer, Vector3.up).magnitude < 0.02f
+                        && !recorder.IsPlaced, "Arrow input does not move Player, and legacy F does not place the camera");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.E));
+                    Next();
+                }
+                else if (step == 146 && age > 0.2f)
+                {
+                    Require(recorder.IsPlaced && recorder.IsRecording && !recorder.LiveTexture
+                        && !placedDevice.Owner && player.GetComponent<PlayerController>().RightHand.State == HandState.Empty
+                        && placedDevice.Id == deviceId && !player.GetComponent<MeleeAttack>().IsBusy,
+                        "E releases the right-hand camera; held RMB does not become a fresh attack click");
+                    InputSystem.QueueStateEvent(mouse, new MouseState());
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    Next();
+                }
+                else if (step == 147 && age > 0.2f)
+                {
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q, Key.E));
+                    Next();
+                }
+                else if (step == 148 && age > 0.2f)
+                {
+                    var controller = player.GetComponent<PlayerController>();
+                    Require(controller.LeftHand.Item?.Source == placedDevice
+                        && controller.RightHand.Item?.Source == player.GetComponent<MeleeAttack>()
+                        && placedDevice.Owner == controller && placedDevice.Id == deviceId && recorder.LiveTexture
+                        && Object.FindObjectsByType<CameraDevice>(FindObjectsSortMode.None).Length == 1,
+                        "Simultaneous Q/E deterministically picks up once into the left hand, preserving ID/owner");
+                    CaptureHandLayout(HandSide.Left);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F1));
+                    Next();
+                }
+                else if (step == 149 && age > 0.2f)
+                {
+                    Require(recorder.ControlsVisible, "F1 opens the updated hand controls guide");
+                    if (!Application.isBatchMode)
+                        ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/hands-controls-f1.png"));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    Next();
+                }
+                else if (step == 150 && age > 0.2f)
+                {
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F1));
+                    Next();
+                }
+                else if (step == 151 && age > 0.2f)
+                {
+                    Require(!recorder.ControlsVisible, "F1 closes the guide without affecting the camera");
+                    Debug.Log("RRM HANDS CHECK PASSED: Q/E placement and pickup, same ID, both camera hands, click/hold, "
+                        + "visible weapon transfer both ways, left-hand melee, failed-pickup rollback, no camera-hand attack, "
+                        + "no arrows/F, simultaneous keys, F1 and passive recording.");
+                    InputSystem.onAfterUpdate -= CountHandClicks;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                    step = 138;
+                    since = Time.time;
+                }
+                else if (step == 138 && age > 0.6f)
+                {
+                    player = GameObject.Find("Player").GetComponent<Rigidbody>();
+                    dummy = GameObject.Find("Dummy").GetComponent<Damageable>();
+                    dummyBody = dummy.GetComponent<Rigidbody>();
+                    recorder = Object.FindFirstObjectByType<CameraRecorder>();
+                    camera = Camera.main;
+                    Require(recorder.LiveTexture && !recorder.IsPlaced
+                        && Quaternion.Angle(recorder.transform.localRotation, initialHandheldRotation) < 0.1f,
+                        "Restart restores the authored camera angle relative to the body");
+                    Require(player.GetComponent<PlayerController>().LeftHand.Item.Source == recorder.GetComponent<CameraDevice>()
+                        && player.GetComponent<PlayerController>().RightHand.Item?.Source == player.GetComponent<MeleeAttack>(),
+                        "Restart restores fresh hands around the new camera device");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                    if (controlsOnly)
+                        Finish(true, "RRM CONTROLS PLAY CHECK PASSED: rear-facing real feed, body-relative WASD/diagonal, "
+                            + "mouse-only body turn, rear view follows body, hand controls, pitch limits, place/pickup and restart.");
+                    else
+                    {
+                        damageEvents = 0;
+                        dummy.Damaged += ObserveHit;
+                        step = 80;
+                        since = Time.time;
+                    }
+                }
+                else if (step == 100 && age > 0.4f)
+                {
+                    Require(dummy.GetComponent<BloodEvidence>(), "CombatPrototype has its evidence emitter");
+                    Require(Object.FindObjectsByType<LightSource>().Length == 8 && !GameObject.Find("Area Floor Preview"),
+                        "Eight logical sources form the test layout without duplication");
+                    CheckLiveLightHud();
+                    StageRange(new Vector3(2.1f, 0.02f, -2), new Vector3(2.1f, 0.02f, -0.65f));
+                    Next();
+                }
+                else if (step == 101 && age > 0.3f)
+                {
+                    CheckHudPlacement();
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/light-quality-hud.png"));
+                    AimCamera(Vector2.zero, true);
+                    Next();
+                }
+                else if (step == 102 && age > 1.3f)
+                {
+                    BloodEvidence evidence = dummy.GetComponent<BloodEvidence>();
+                    Require(damageEvents == 1 && dummy.Health < 90 && evidence.Marks.Count == 1,
+                        "Real mouse melee produces one DamageEvent and one persistent mark");
+                    Require(player.GetComponent<PlayerController>().LeftHand.Item.Source == recorder.GetComponent<CameraDevice>()
+                        && recorder.RecordedHits == 1, "Left-hand filming and one right-weapon-hand click record the real hit together");
+                    evidenceMark = evidence.Marks[0];
+                    Require(evidenceMark.Mark && !evidenceMark.Mark.GetComponent<Collider>()
+                        && Mathf.Abs(evidenceMark.Position.y - 0.015f) < 0.03f, "Floor evidence is offset above the surface without collision");
+                    Require(recorder.GetComponent<CameraDevice>().BloodEvents.Count == 1, "Each damage-created mark reaches this device once");
+                    Vector3 floor = evidenceMark.Position;
+                    StageRange(new Vector3(floor.x, 0.02f, floor.z - 2), new Vector3(floor.x, 0.02f, floor.z + 3));
+                    recorder.SetViewRotation(Quaternion.LookRotation(evidenceMark.Position - recorder.transform.position));
+                    Next();
+                }
+                else if (step == 103 && age > 0.3f)
+                {
+                    Require(recorder.InspectBlood(evidenceMark).Visible, "Handheld can inspect the surviving floor mark");
+                    evidenceFrame = ReadLiveFrame("evidence-floor-feed.png");
+                    evidenceMark.Mark.GetComponent<Renderer>().enabled = false;
+                    Next();
+                }
+                else if (step == 104 && age > 0.2f)
+                {
+                    Require(ChangedPixels(evidenceFrame, ReadLiveFrame("evidence-floor-without-mark.png")) > 20,
+                        "Persistent blood contributes pixels to the real live feed after the burst has ended");
+                    evidenceMark.Mark.GetComponent<Renderer>().enabled = true;
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
+                    Next();
+                }
+                else if (step == 105 && age > 0.3f)
+                {
+                    Require(recorder.IsPlaced && recorder.IsRecording && !recorder.LiveTexture
+                        && recorder.InspectBlood(evidenceMark).Visible, "Placed camera still sees persistent evidence without remote video");
+                    recorder.transform.Rotate(0, 180, 0, Space.World);
+                    Require(!recorder.InspectBlood(evidenceMark).Visible, "Turning away changes current blood visibility to NO");
+                    CheckEvidenceLight(new Vector3(2.8f, 1.05f, 0.4f), VisibilityLevel.Normal);
+                    CheckEvidenceLight(new Vector3(2.8f, 1.05f, -1.8f), VisibilityLevel.Low);
+                    CheckEvidenceLight(new Vector3(1f, 1.05f, -4.5f), VisibilityLevel.Dark);
+                    var events = recorder.GetComponent<CameraDevice>().Events;
+                    Require(events[events.Count - 3].Clarity > events[events.Count - 2].Clarity
+                        && events[events.Count - 2].Clarity > events[events.Count - 1].Clarity,
+                        "Normal, low and dark retain progressively lower clarity on the device");
+                    float wallX = GameObject.Find("East Wall").GetComponent<Collider>().bounds.min.x;
+                    CheckEvidenceLight(new Vector3(wallX - 0.525f, 1.05f, 0));
+                    var marks = dummy.GetComponent<BloodEvidence>().Marks;
+                    BloodEvent wall = marks[marks.Count - 1];
+                    Require(Mathf.Abs(wall.Position.x - (wallX - 0.015f)) < 0.03f && wall.Position.y > 0.9f,
+                        "Nearby east wall receives evidence at impact height instead of on the floor");
+                    recorder.transform.position = wall.Position + Vector3.right * 2;
+                    recorder.transform.LookAt(wall.Position);
+                    Require(!recorder.InspectBlood(wall).Visible, "The wall blocks evidence when the camera is on its opposite side");
+                    dummyBody.position += Vector3.back * 3;
+                    dummyBody.transform.position = dummyBody.position;
+                    Vector3 oldPosition = camera.transform.position;
+                    Quaternion oldRotation = camera.transform.rotation;
+                    float oldSize = camera.orthographicSize;
+                    try
+                    {
+                        camera.transform.position = wall.Position + Vector3.left * 2;
+                        camera.transform.LookAt(wall.Position);
+                        camera.orthographicSize = 0.4f;
+                        Require(Array.FindAll(Capture("evidence-wall.png", 640, 480), IsDummyRed).Length > 100,
+                            "Wall evidence is rendered on the exposed face");
+                    }
+                    finally
+                    {
+                        camera.transform.SetPositionAndRotation(oldPosition, oldRotation);
+                        camera.orthographicSize = oldSize;
+                    }
+                    Require(evidenceMark.Mark, "First melee mark survives later hits and camera movement");
+                    Next();
+                }
+                else if (step == 106 && age > 0.3f)
+                {
+                    Capture("evidence-room.png", 1280, 800);
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
+                    Next();
+                }
+                else if (step == 107 && age > 0.6f)
+                {
+                    var fresh = Object.FindFirstObjectByType<CameraDevice>();
+                    Require(!evidenceMark.Mark && !GameObject.Find("Blood Evidence")
+                        && fresh.BloodEvents.Count == 0 && fresh.Events.Count == 0
+                        && Object.FindFirstObjectByType<BloodEvidence>().Marks.Count == 0,
+                        "Scene restart clears world marks and per-device observations");
+                    if (combined)
+                    {
+                        step = 33;
+                        since = Time.time;
+                    }
+                    else Finish(true, "RRM EVIDENCE PLAY CHECK PASSED: real melee, persistent floor/wall marks, native feed pixels, placed inspection, same-target LightLevel gradient, event snapshots, occlusion and restart.");
+                }
                 else if (step == 80 && age > 0.6f)
                 {
-                    Require(SceneManager.GetActiveScene().path == CombatPrototypeBuilder.RangeScenePath,
+                    Require(SceneManager.GetActiveScene().path == (combined ? CombatPrototypeBuilder.ScenePath : CombatPrototypeBuilder.RangeScenePath),
                         "Camera range is the active playable scene");
-                    Capture("range-overview.png", 1280, 800);
-                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/range-start-ui.png"));
+                    if (combined)
+                        Require(GameObject.Find("Low Cover") && GameObject.Find("High Cover") && GameObject.Find("Blind Corner")
+                            && dummy.GetComponent<BloodEvidence>() && Object.FindObjectsByType<LightSource>().Length == 8,
+                            "One scene contains the previous layout AND the new evidence/light features");
+                    CheckHudPlacement();
+                    Capture(combined ? "combined-prototype.png" : "range-overview.png", 1280, 800);
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/" + (combined ? "combined-prototype-ui.png" : "range-start-ui.png")));
+                    if (combined)
+                    {
+                        float dark = CheckLightPreview(new Vector3(1f, 0.005f, -4.5f));
+                        foreach (Vector3 bright in new[] { new Vector3(-5.1f, 0.005f, -3.1f),
+                            new Vector3(-5.6f, 0.005f, 3.7f), new Vector3(2.8f, 0.005f, 0.4f),
+                            new Vector3(3f, 0.005f, -4.5f), new Vector3(5.8f, 0.005f, 4.2f) })
+                            Require(dark - CheckLightPreview(bright) > 0.15f,
+                                "Both rooms contain multiple clearly distinct bright pockets and dark ground");
+                        var source = GameObject.Find("Light Source East").GetComponent<LightSource>();
+                        lightSourcePosition = source.transform.position;
+                        source.enabled = false;
+                    }
                     beforeDummy = dummyBody.position;
                     Next();
                 }
                 else if (step == 81 && age > 1.3f)
                 {
-                    Require(Vector3.Distance(beforeDummy, dummyBody.position) > 0.2f,
-                        "Existing Dummy wanders in the new room");
+                    if (combined)
+                    {
+                        Require(CheckLightPreview(new Vector3(2.8f, 0.005f, 0.4f)) > 0.17f,
+                            "Disabling a source updates its floor tint");
+                        var source = GameObject.Find("Light Source East").GetComponent<LightSource>();
+                        source.transform.position = lightSourcePosition + Vector3.back * 4;
+                        source.enabled = true;
+                    }
+                    Require(combined ? dummy.GetComponent<PlayerController>().State == PlayerController.EnemyState.Idle
+                        && Vector3.Distance(beforeDummy, dummyBody.position) < 0.05f
+                        : Vector3.Distance(beforeDummy, dummyBody.position) > 0.2f,
+                        "Current enemy waits for detection; archived noncombat Dummy still wanders");
                     StageRange(new Vector3(-2, 0.02f, -2), new Vector3(2, 0.02f, -2));
                     Next();
                 }
                 else if (step == 82 && age > 0.3f)
                 {
+                    if (combined)
+                    {
+                        Require(CheckLightPreview(new Vector3(2.8f, 0.005f, -3.6f))
+                            < CheckLightPreview(new Vector3(2.8f, 0.005f, 0.4f)), "Moving a source moves the visual gradient");
+                        GameObject.Find("Light Source East").transform.position = lightSourcePosition;
+                    }
                     Require(recorder.CanSee(dummyBody.position + Vector3.up * 1.05f), "Doorway gives a clear view into the other room");
                     RedCenter(ReadLiveFrame("range-doorway-feed.png"));
                     ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/range-doorway-ui.png"));
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.D));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
                     Next();
                 }
-                else if (step == 83 && age > 1.2f)
+                else if (step == 83 && (player.position.x > 0.8f || age > 3f))
                 {
-                    Require(player.position.x > 0.8f, "D walks through the doorway into the second room");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.A));
+                    Require(player.position.x > 0.8f, $"Body-forward W crosses the doorway: {player.position}");
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.S));
                     Next();
                 }
-                else if (step == 84 && age > 1.2f)
+                else if (step == 84 && (player.position.x < -1 || age > 3f))
                 {
-                    Require(player.position.x < -1, "A returns through the same doorway");
+                    Require(player.position.x < -1, $"Body-backward S returns through the doorway: {player.position}");
                     StageRange(new Vector3(-1, 0.02f, 1), new Vector3(2, 0.02f, 1));
                     Next();
                 }
                 else if (step == 85 && age > 0.3f)
                 {
                     Require(!recorder.CanSee(dummyBody.position + Vector3.up * 1.05f), "Solid divider hides the other room");
+                    Require(!recorder.VisibleTargetLightLevel.HasValue && recorder.LightReadout.Contains("OFF CAMERA"),
+                        "Light HUD does not reveal a hidden target through the divider");
+                    ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/hud-off-camera.png"));
                     Require(Array.FindAll(ReadLiveFrame("range-divider-feed.png"), IsDummyRed).Length == 0,
                         "Dummy is absent from the real feed behind the divider");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.D));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
                     Next();
                 }
                 else if (step == 86 && age > 1f)
@@ -1202,16 +2321,22 @@ namespace RRM.Editor
                 else if (step == 89 && age > 0.3f)
                 {
                     Require(recorder.CanSee(dummyBody.position + Vector3.up * 1.05f), "Doorway is visible again after repositioning");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
                     Next();
                 }
                 else if (step == 90 && age > 0.3f)
                 {
                     Require(recorder.IsPlaced && !recorder.LiveTexture, "F leaves the same passive camera watching the doorway");
+                    Require(camera.rect == new Rect(0, 0, 1, 1), "Placing the camera restores the full room viewport");
+                    Require(recorder.LightReadout == string.Empty && !recorder.VisibleTargetLightLevel.HasValue,
+                        "Placed recording does not expose live light or quality diagnostics");
                     Hurtbox torso = Array.Find(dummy.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
                     Require(dummy.ApplyDamage(player.gameObject, torso, torso.transform.position, Vector3.forward, dummy.Health, 0)
                         && recorder.ReportReady && recorder.GetComponent<CameraDevice>().DeathRecorded,
                         "Placed camera records a fatal event through the doorway and produces its report");
+                    var events = recorder.GetComponent<CameraDevice>().Events;
+                    Require(events[events.Count - 1].Damage.IsFatal && events[events.Count - 1].Clarity < 0.25f
+                        && recorder.ReportText.Contains("Last event quality:"), "A witnessed low-light death has poor recorded quality");
                     Next();
                 }
                 else if (step == 91 && age > 0.2f)
@@ -1227,12 +2352,24 @@ namespace RRM.Editor
                 else if (step == 93 && age > 0.6f)
                 {
                     recorder = Object.FindFirstObjectByType<CameraRecorder>();
-                    Require(SceneManager.GetActiveScene().path == CombatPrototypeBuilder.RangeScenePath
+                    Require(SceneManager.GetActiveScene().path == (combined ? CombatPrototypeBuilder.ScenePath : CombatPrototypeBuilder.RangeScenePath)
                         && GameObject.Find("Room Divider North") && !recorder.IsPlaced && recorder.LiveTexture
                         && !recorder.ReportReady && recorder.RecordedHits == 0,
                         "R restarts the camera range, not the old scene, with one fresh handheld camera");
                     Require(Object.FindObjectsByType<CameraDevice>(FindObjectsSortMode.None).Length == 1, "Range contains only one camera device");
-                    Finish(true, "RRM RANGE PLAY CHECK PASSED: Dummy motion, doorway traversal both ways, solid-wall collision, real feed occlusion, low/high cover, placed report and scene restart.");
+                    if (combined)
+                    {
+                        player = GameObject.Find("Player").GetComponent<Rigidbody>();
+                        dummy = GameObject.Find("Dummy").GetComponent<Damageable>();
+                        dummyBody = dummy.GetComponent<Rigidbody>();
+                        camera = Camera.main;
+                        damageEvents = 0;
+                        dummy.Damaged += ObserveHit;
+                        InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                        step = 100;
+                        since = Time.time;
+                    }
+                    else Finish(true, "RRM RANGE PLAY CHECK PASSED: Dummy motion, doorway traversal both ways, solid-wall collision, real feed occlusion, low/high cover, placed report and scene restart.");
                 }
             }
             catch (Exception error) { Finish(false, error.ToString()); }
@@ -1241,15 +2378,124 @@ namespace RRM.Editor
         private static void AimAt(Vector3 target, bool attack = false)
         {
             Vector2 point = camera.WorldToScreenPoint(new Vector3(target.x, 0, target.z));
-            InputSystem.QueueStateEvent(mouse, new MouseState { position = point, buttons = (ushort)(attack ? 1 : 0) });
+            InputSystem.QueueStateEvent(mouse, new MouseState { position = point, buttons = (ushort)(attack ? 2 : 0) });
         }
 
         private static bool IsDummyRed(Color32 color) => color.r >= 70 && color.r >= color.g * 1.4f && color.r >= color.b * 1.4f;
 
-        private static void StageRange(Vector3 playerPosition, Vector3 dummyPosition)
+        private static float CheckLightPreview(Vector3 point)
+        {
+            GameObject overlay = GameObject.Find("Light Level Preview");
+            Require(overlay && !overlay.GetComponent<Collider>()
+                && Object.FindObjectsByType<LightLevelPreview>().Length == 1, "One nonphysical floor preview exists");
+            Material material = overlay.GetComponent<Renderer>().sharedMaterial;
+            var texture = material.GetTexture("_BaseMap") as Texture2D;
+            Vector3 uv = overlay.transform.InverseTransformPoint(point) + new Vector3(0.5f, 0.5f, 0);
+            float alpha = texture.GetPixelBilinear(uv.x, uv.y).a;
+            float expected = GameObject.Find("Floor").GetComponent<LightLevelPreview>().opacity
+                * (1f - Mathf.SmoothStep(0f, 1f, recorder.GetLightLevel(point) / 70f));
+            Require(Mathf.Abs(alpha - expected) < 0.006f && alpha <= 0.185f
+                && material.GetFloat("_ZWrite") == 0f, "Preview pixels match LightLevel with a subtle, non-depth-writing tint");
+            return alpha;
+        }
+
+        private static void CheckHudPlacement()
+        {
+            // Batch mode has no visible Game View; validate its layout in the graphical run.
+            if (Application.isBatchMode) return;
+            float height = Mathf.Min(144f, Screen.height * 0.32f);
+            Require(Mathf.Abs(camera.pixelRect.yMin - height) < 1f
+                && Mathf.Abs(camera.pixelRect.yMax - Screen.height) < 1f,
+                "Room viewport is above the compact HUD strip, including after restart");
+            foreach (Vector3 point in new[] { new Vector3(-8.2f, 2.6f, 6.2f), new Vector3(8.2f, 2.6f, 6.2f),
+                new Vector3(-8.2f, 0, -6.2f), new Vector3(8.2f, 0, -6.2f) })
+            {
+                Vector3 projected = camera.WorldToViewportPoint(point);
+                Require(projected.x > 0 && projected.x < 1 && projected.y > 0 && projected.y < 1,
+                    "Both rooms fit inside the unobstructed game viewport");
+            }
+            Require(recorder.LiveTexture.width == 640 && recorder.LiveTexture.height == 480,
+                "Repositioning the feed does not change the recording camera or texture resolution");
+            Debug.Log("RRM HUD PLACEMENT: " + Screen.width + "x" + Screen.height + ", room=" + camera.pixelRect
+                + ", HUD height=" + height);
+        }
+
+        private static void CheckLiveLightHud()
+        {
+            float previous = 101f;
+            foreach (Vector3 position in new[] { new Vector3(2.8f, 0.02f, 0.4f),
+                new Vector3(2.8f, 0.02f, -1.8f), new Vector3(1f, 0.02f, -4.5f) })
+            {
+                StageRange(position + Vector3.forward * 1.6f, position);
+                Hurtbox torso = Array.Find(dummy.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
+                float light = recorder.GetLightLevel(torso.transform.position);
+                Require(recorder.VisibleTargetLightLevel.HasValue
+                    && Mathf.Abs(recorder.VisibleTargetLightLevel.Value - light) < 0.001f
+                    && recorder.LightReadout.Contains("TARGET LIGHT: " + light.ToString("0") + "/100")
+                    && recorder.LightReadout.Contains("QUALITY: " + light.ToString("0") + "%")
+                    && recorder.LightReadout.Contains("LIGHT HERE: " + recorder.GetLightLevel(player.position).ToString("0"))
+                    && light < previous, "HUD follows the same target and player across bright, low and dark positions");
+                previous = light;
+                Debug.Log("RRM LIVE LIGHT HUD: " + recorder.LightReadout.Replace('\n', ' '));
+            }
+        }
+
+        private static void CheckEvidenceLight(Vector3 point, VisibilityLevel? expected = null)
+        {
+            Hurtbox torso = Array.Find(dummy.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
+            dummyBody.position += point - torso.transform.position;
+            dummyBody.transform.position = dummyBody.position;
+            dummyBody.linearVelocity = Vector3.zero;
+            recorder.transform.position = point + Vector3.forward * 3;
+            recorder.transform.LookAt(point - Vector3.up * 0.5f);
+            Physics.SyncTransforms();
+            float lightLevel = recorder.GetLightLevel(torso.transform.position);
+            Require(lightLevel >= 0 && lightLevel <= 100
+                && (!expected.HasValue || LightSource.Classify(lightLevel) == expected.Value),
+                "The same Dummy samples the expected light at its current position");
+            var device = recorder.GetComponent<CameraDevice>();
+            int hits = device.RecordedHits;
+            Require(dummy.ApplyDamage(player.gameObject, torso, point, Vector3.forward, 1, 0), "Lighting fixture sends real DamageEvent");
+            Require(device.RecordedHits == hits + 1 && Mathf.Abs(device.Events[hits].LightLevel - lightLevel) < 0.001f,
+                "Placed recorder stores the lighting at the impact point, not at the camera");
+            var observation = device.BloodEvents[device.BloodEvents.Count - 1];
+            Physics.Linecast(recorder.lens.position, observation.Blood.Position, out RaycastHit obstruction,
+                recorder.obstructionMask, QueryTriggerInteraction.Ignore);
+            Require(observation.Visible, "Blood is visible from the fixture: mark=" + observation.Blood.Position
+                + ", lens=" + recorder.lens.position + ", obstruction=" + obstruction.collider
+                + ", local=" + recorder.lens.InverseTransformPoint(observation.Blood.Position));
+            float surfaceLevel = recorder.GetLightLevel(observation.Blood.Position);
+            Require(Mathf.Abs(observation.LightLevel - surfaceLevel) < 0.001f
+                && Mathf.Abs(observation.Clarity - observation.LightLevel / 100f) < 0.00001f,
+                $"Blood retains surface light: recorded={observation.LightLevel:R}, current={surfaceLevel:R}, clarity={observation.Clarity:R}");
+            var sources = Array.FindAll(Object.FindObjectsByType<LightSource>(), source => source.isActiveAndEnabled);
+            foreach (LightSource source in sources) source.enabled = false;
+            try
+            {
+                Require(recorder.GetLightLevel(point) == 0f && Mathf.Abs(device.Events[hits].LightLevel - lightLevel) < 0.001f
+                    && device.BloodEvents[device.BloodEvents.Count - 1].LightLevel == observation.LightLevel,
+                    "Switching off current illumination does not rewrite recorded hit or blood history");
+            }
+            finally { foreach (LightSource source in sources) source.enabled = true; }
+            Quaternion facing = recorder.transform.rotation;
+            recorder.transform.Rotate(0, 180, 0, Space.World);
+            Require(!recorder.InspectBlood(observation.Blood).Visible
+                && recorder.InspectBlood(observation.Blood).Clarity == 0f && observation.Visible,
+                "Current visibility can change without rewriting the original observation");
+            recorder.transform.rotation = facing;
+            Debug.Log("RRM EVIDENCE LIGHT: same Dummy at " + point + " LightLevel=" + lightLevel.ToString("0.00")
+                + " " + device.Events[hits].Visibility + ", surface=" + observation.LightLevel.ToString("0.00"));
+        }
+
+        private static void StageRange(Vector3 playerPosition, Vector3 dummyPosition, bool aim = true)
         {
             InputSystem.QueueStateEvent(keyboard, new KeyboardState());
             dummy.GetComponent<PlayerController>().enabled = false;
+            if (dummy.TryGetComponent(out MeleeAttack enemyAttack))
+            {
+                enemyAttack.enabled = false;
+                enemyAttack.enabled = true;
+            }
             player.position = playerPosition;
             dummyBody.position = dummyPosition;
             player.rotation = Quaternion.LookRotation(Vector3.ProjectOnPlane(dummyPosition - playerPosition, Vector3.up));
@@ -1257,9 +2503,91 @@ namespace RRM.Editor
             player.linearVelocity = dummyBody.linearVelocity = Vector3.zero;
             player.transform.SetPositionAndRotation(playerPosition, player.rotation);
             dummyBody.transform.SetPositionAndRotation(dummyPosition, Quaternion.identity);
-            recorder.transform.LookAt(dummyBody.position + Vector3.up * 1.05f);
+            recorder.SetViewRotation(Quaternion.LookRotation(dummyBody.position + Vector3.up * 1.05f - recorder.transform.position));
             Physics.SyncTransforms();
-            AimCamera(Vector2.zero);
+            if (aim) AimCamera(Vector2.zero);
+        }
+
+        private static void CheckRejectedHandPickup()
+        {
+            var controller = player.GetComponent<PlayerController>();
+            var attack = player.GetComponent<MeleeAttack>();
+            Vector3 position = placedDevice.transform.position;
+            Vector3 weaponPosition = attack.weaponPivot.localPosition;
+            Vector3 mount = mountLocalPosition;
+            mount.x = Mathf.Abs(mount.x);
+            var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            try
+            {
+                wall.transform.position = (controller.transform.TransformPoint(mount) + position) * 0.5f;
+                wall.transform.localScale = Vector3.one * 0.2f;
+                Physics.SyncTransforms();
+                Require(!placedDevice.TryPickup(controller, HandSide.Right), "Requested right hand cannot pick up through a wall");
+                wall.SetActive(false);
+                placedDevice.transform.position += Vector3.up * 10;
+                Require(!placedDevice.TryPickup(controller, HandSide.Right), "Out-of-reach pickup fails");
+                placedDevice.transform.position = position;
+                Require(attack.TryAttack() && !placedDevice.TryPickup(controller, HandSide.Right),
+                    "An active weapon sweep cannot teleport to the other hand during pickup");
+                Require(controller.RightHand.Item?.Source == attack && controller.LeftHand.State == HandState.Empty
+                    && attack.weaponPivot.localPosition == weaponPosition && !placedDevice.Owner
+                    && placedDevice.transform.position == position && placedDevice.Id == deviceId,
+                    "Rejected pickups leave weapon, device, ownership and hand states untouched");
+            }
+            finally
+            {
+                placedDevice.transform.position = position;
+                attack.enabled = false;
+                attack.enabled = true;
+                Object.DestroyImmediate(wall);
+                Physics.SyncTransforms();
+            }
+        }
+
+        private static void CheckStance(bool crouched)
+        {
+            var controller = player.GetComponent<PlayerController>();
+            var capsule = player.GetComponent<CapsuleCollider>();
+            float scale = crouched ? controller.crouchHeightScale : 1f;
+            Require(controller.IsCrouching == crouched && Mathf.Abs(capsule.height - standingCapsuleHeight * scale) < 0.001f
+                && Mathf.Abs(capsule.center.y - capsule.height * 0.5f) < 0.001f
+                && Mathf.Abs(player.GetComponent<HitFeedback>().visual.localScale.y - scale) < 0.001f,
+                "Stance changes the actual collider/body/hurtboxes without moving the capsule's feet");
+            Require(Mathf.Abs(recorder.transform.localPosition.y - mountLocalPosition.y * scale) < 0.001f
+                && recorder.transform.lossyScale == Vector3.one && recorder.LiveTexture
+                && Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) < 0.1f,
+                "Held camera follows stance height without scaling or changing its independent direction");
+        }
+
+        private static void CaptureHandLayout(HandSide cameraSide, string fileName = null)
+        {
+            var controller = player.GetComponent<PlayerController>();
+            var attack = player.GetComponent<MeleeAttack>();
+            var cameraHand = controller.HandHolding(controller.HeldCamera);
+            var weaponHand = controller.HandHolding(attack);
+            float sign = cameraSide == HandSide.Left ? -1 : 1;
+            Require(cameraHand != null && cameraHand.Side == cameraSide && weaponHand != null && weaponHand != cameraHand
+                && recorder.transform.parent == player.transform && attack.weaponPivot.parent == player.transform
+                && recorder.transform.localPosition.x * sign > 0.4f && attack.weaponPivot.localPosition.x * sign < -0.4f,
+                "Actual camera housing/lens and weapon pivot occupy their controlling hands, not the same hand");
+            Vector3 position = camera.transform.position;
+            Quaternion rotation = camera.transform.rotation;
+            float size = camera.orthographicSize;
+            Rect rect = camera.rect;
+            try
+            {
+                camera.transform.position = player.position + player.rotation * new Vector3(0, 5, -4);
+                camera.transform.LookAt(player.position + Vector3.up);
+                camera.orthographicSize = 1.7f;
+                camera.rect = new Rect(0, 0, 1, 1);
+                Capture(fileName ?? "hands-camera-" + cameraSide.ToString().ToLowerInvariant() + ".png", 800, 800);
+            }
+            finally
+            {
+                camera.transform.SetPositionAndRotation(position, rotation);
+                camera.orthographicSize = size;
+                camera.rect = rect;
+            }
         }
 
         private static void CheckCameraOwnershipTransfer()
@@ -1306,24 +2634,54 @@ namespace RRM.Editor
                 "Returning the same device preserves events and creates no extra device or rendering camera");
         }
 
+        private static void CountHandClicks()
+        {
+            // EditorApplication.update sees editor input buffers, not the gameplay mouse state.
+            if (!player || InputState.currentUpdateType != InputUpdateType.Dynamic || handInputFrame == Time.frameCount) return;
+            handInputFrame = Time.frameCount;
+            var controller = player.GetComponent<PlayerController>();
+            leftHandHolding = controller.LeftHand.IsHoldActive;
+            rightHandHolding = controller.RightHand.IsHoldActive;
+            if (controller.LeftHand.WasClickedThisFrame) leftHandClicks++;
+            if (controller.RightHand.WasClickedThisFrame) rightHandClicks++;
+        }
+
         private static void AimCamera(Vector2 delta, bool attack = false)
         {
+            var controller = player.GetComponent<PlayerController>();
+            var hand = controller.HandHolding(controller.HeldCamera);
+            ushort cameraButton = (ushort)(hand == null || hand.Side == HandSide.Left ? 1 : 2);
+            var weaponHand = controller.HandHolding(player.GetComponent<MeleeAttack>());
+            int weaponButton = weaponHand == null ? 0 : weaponHand.Side == HandSide.Left ? 1 : 2;
             InputSystem.QueueStateEvent(mouse, new MouseState
             {
                 position = camera.WorldToScreenPoint(player.position + Vector3.right * 5f),
-                buttons = (ushort)(attack ? 3 : 2),
+                buttons = (ushort)(cameraButton | (attack ? weaponButton : 0)),
                 delta = delta
             });
         }
 
         private static void ObserveHit(DamageEvent hit)
         {
+            if (hit.IsBleeding) return;
             hitTime = Time.time;
             unscaledHitTime = Time.unscaledTime;
             damageEvents++;
             lastHitVisible = recorder.CanSee(hit.Point);
             Require(hit.Source == player.gameObject && hit.Target == dummy, "Melee event identifies the actual actors");
             Require(dummy.GetComponent<HitFeedback>().blood.particleCount > 0, "Blood emits immediately on DamageEvent");
+        }
+
+        private static void ObserveEnemyHit(DamageEvent hit)
+        {
+            if (hit.IsBleeding) return;
+            enemyHits++;
+            enemyHitTime = Time.time;
+            Require(hit.Source == dummy.gameObject && hit.Target == playerHealth
+                && dummy.GetComponent<MeleeAttack>().Phase == MeleeAttack.AttackPhase.Strike
+                && player.GetComponent<HitFeedback>().blood.particleCount > 0,
+                "Enemy's existing melee produces the real player DamageEvent and immediate blood");
+            Debug.Log($"RRM ENEMY HIT: #{enemyHits}, part={hit.Part}, damage={hit.Amount}, HP={playerHealth.Health}, fatal={hit.IsFatal}");
         }
 
         private static void PositionForRecordingHit()
@@ -1413,6 +2771,64 @@ namespace RRM.Editor
             return (float)(x / count);
         }
 
+        private static void TickStarterCover(float age)
+        {
+            var controller = player.GetComponent<PlayerController>();
+            Bounds cover = GameObject.Find("Low Cover").GetComponent<Collider>().bounds;
+            if (step == 500 && age > 0.5f)
+            {
+                Require(Mathf.Abs(cover.size.y - 0.45f) < 0.001f && controller.jumpHeight == 0.6f,
+                    "Saved cover is 45 cm; existing jump is unchanged");
+                StageRange(new Vector3(cover.center.x, 0.02f, cover.min.z - 0.85f), new Vector3(6, 0.02f, 5), false);
+                player.rotation = Quaternion.identity; player.transform.rotation = player.rotation;
+                InputSystem.QueueStateEvent(mouse, new MouseState());
+                Next();
+            }
+            else if (step == 501 && age > 0.3f)
+            {
+                Require(controller.IsGrounded, "Start on the floor, not already on cover");
+                beforeLens = recorder.lens.position;
+                spaceTapReleased = false;
+                InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
+                Next();
+            }
+            else if (step == 502 && age > 0.06f && !spaceTapReleased)
+            {
+                spaceTapReleased = true;
+                InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
+            }
+            else if (step == 502 && age > 0.2f && (player.position.z >= cover.center.z - 0.2f || age > 1.2f))
+            {
+                Require(player.position.y > cover.max.y - 0.05f && player.position.z > cover.min.z + 0.2f,
+                    $"W + Space clears the front edge: {player.position}");
+                InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                Next();
+            }
+            else if (step == 503 && age > 0.7f)
+            {
+                Require(controller.IsGrounded && Mathf.Abs(player.position.y - cover.max.y) < 0.04f
+                    && player.position.z > cover.min.z && player.position.z < cover.max.z,
+                    $"Stable landing on cover: {player.position}");
+                Require(recorder.LiveTexture && Mathf.Abs(recorder.lens.position.y - beforeLens.y - cover.max.y) < 0.05f,
+                    "Handheld lens rises with the player and feed stays live");
+                Capture("starter-cover-jump.png", 1280, 800);
+                ReadLiveFrame("starter-cover-feed.png");
+                InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.S));
+                Next();
+            }
+            else if (step == 504 && age > 0.85f)
+            {
+                InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+                Next();
+            }
+            else if (step == 505 && age > 0.4f)
+            {
+                Require(controller.IsGrounded && Mathf.Abs(player.position.y) < 0.04f && player.position.z < cover.min.z,
+                    "S walks back off cover and lands on floor");
+                Finish(true, "RRM STARTER COVER PLAY CHECK PASSED: saved 45 cm cover, real W+Space landing, live camera and S descent; movement unchanged.");
+            }
+        }
+
         private static void Next() { step++; since = Time.time; }
         private static void Require(bool condition, string message)
         {
@@ -1440,8 +2856,8 @@ namespace RRM.Editor
                 Color32 first = colors[0];
                 foreach (Color32 color in colors)
                     if (Math.Abs(color.r - first.r) + Math.Abs(color.g - first.g) + Math.Abs(color.b - first.b) > 30) varied++;
-                Require(varied > colors.Length / 10, "Rendered frame is nonblank");
                 File.WriteAllBytes(Path.Combine(folder, fileName), pixels.EncodeToPNG());
+                Require(varied > colors.Length / 10, $"Rendered frame is nonblank: {fileName}, {varied}/{colors.Length} varied pixels");
                 return colors;
             }
             finally
@@ -1456,9 +2872,11 @@ namespace RRM.Editor
 
         private static void Finish(bool success, string message)
         {
+            InputSystem.onAfterUpdate -= CountHandClicks;
             EditorApplication.update -= Tick;
             Application.logMessageReceived -= WatchErrors;
             if (dummy) dummy.Damaged -= ObserveHit;
+            if (playerHealth) playerHealth.Damaged -= ObserveEnemyHit;
             if (keyboard != null && keyboard.added) InputSystem.RemoveDevice(keyboard);
             if (mouse != null && mouse.added) InputSystem.RemoveDevice(mouse);
             if (otherInputs != null)

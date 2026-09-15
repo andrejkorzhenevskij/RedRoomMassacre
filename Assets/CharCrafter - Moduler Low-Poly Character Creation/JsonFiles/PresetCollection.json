@@ -1,0 +1,305 @@
+{
+    "Presets": [
+        {
+            "BaseMesh": 0,
+            "ToneSkin": 0,
+            "Description": "Sherif",
+            "clothHistory": [
+                {
+                    "ClothingIndex": 12,
+                    "MaterialIndex": [
+                        13
+                    ]
+                },
+                {
+                    "ClothingIndex": 8,
+                    "MaterialIndex": [
+                        0,
+                        3,
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": 7,
+                    "MaterialIndex": [
+                        3,
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": 7,
+                    "MaterialIndex": [
+                        3,
+                        0,
+                        14
+                    ]
+                },
+                {
+                    "ClothingIndex": 5,
+                    "MaterialIndex": [
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": 7,
+                    "MaterialIndex": [
+                        3,
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                }
+            ],
+            "ShapeKeys": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ]
+        },
+        {
+            "BaseMesh": 0,
+            "ToneSkin": 0,
+            "Description": "Sherif_Tie",
+            "clothHistory": [
+                {
+                    "ClothingIndex": 11,
+                    "MaterialIndex": [
+                        13,
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": 8,
+                    "MaterialIndex": [
+                        0,
+                        3,
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": 7,
+                    "MaterialIndex": [
+                        3,
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": 7,
+                    "MaterialIndex": [
+                        3,
+                        0,
+                        14
+                    ]
+                },
+                {
+                    "ClothingIndex": 5,
+                    "MaterialIndex": [
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": 7,
+                    "MaterialIndex": [
+                        3,
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                }
+            ],
+            "ShapeKeys": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ]
+        },
+        {
+            "BaseMesh": 0,
+            "ToneSkin": 0,
+            "Description": "Doctor",
+            "clothHistory": [
+                {
+                    "ClothingIndex": 6,
+                    "MaterialIndex": [
+                        2
+                    ]
+                },
+                {
+                    "ClothingIndex": 0,
+                    "MaterialIndex": [
+                        2
+                    ]
+                },
+                {
+                    "ClothingIndex": 3,
+                    "MaterialIndex": [
+                        0,
+                        2
+                    ]
+                },
+                {
+                    "ClothingIndex": 4,
+                    "MaterialIndex": [
+                        13,
+                        0,
+                        13
+                    ]
+                },
+                {
+                    "ClothingIndex": 3,
+                    "MaterialIndex": [
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                }
+            ],
+            "ShapeKeys": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ]
+        },
+        {
+            "BaseMesh": 0,
+            "ToneSkin": 0,
+            "Description": "Older guy",
+            "clothHistory": [
+                {
+                    "ClothingIndex": 7,
+                    "MaterialIndex": [
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": 0,
+                    "MaterialIndex": [
+                        3
+                    ]
+                },
+                {
+                    "ClothingIndex": 0,
+                    "MaterialIndex": [
+                        13
+                    ]
+                },
+                {
+                    "ClothingIndex": 4,
+                    "MaterialIndex": [
+                        0,
+                        13
+                    ]
+                },
+                {
+                    "ClothingIndex": 4,
+                    "MaterialIndex": [
+                        0
+                    ]
+                },
+                {
+                    "ClothingIndex": 4,
+                    "MaterialIndex": [
+                        2,
+                        13
+                    ]
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": 0,
+                    "MaterialIndex": [
+                        0,
+                        1
+                    ]
+                },
+                {
+                    "ClothingIndex": -1,
+                    "MaterialIndex": []
+                },
+                {
+                    "ClothingIndex": 1,
+                    "MaterialIndex": [
+                        0
+                    ]
+                }
+            ],
+            "ShapeKeys": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ]
+        }
+    ]
+}

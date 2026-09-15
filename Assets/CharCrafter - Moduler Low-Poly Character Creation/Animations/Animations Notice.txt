@@ -1,0 +1,10 @@
+Animations Notice
+Male and female characters use different armature structures, so animations are not interchangeable between them.
+
+Both rigs are fully Humanoid-compatible in Unity, meaning:
+
+Each can be animated independently
+
+You can use third-party sources like Mixamo, but export animations separately for each model
+
+Attempting to apply a male animation to a female character (or vice versa) may cause incorrect deformation or broken poses.

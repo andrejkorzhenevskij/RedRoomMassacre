@@ -21,24 +21,74 @@ namespace RRM
         [Min(0.01f)] public float mouseSensitivity = 0.15f;
         [Range(-80f, 0f)] public float minPitch = -25f;
         [Range(0f, 80f)] public float maxPitch = 70f;
-        [Range(0f, 90f)] public float maxYaw = 90f;
         public bool IsPlaced => device && device.State == CameraDeviceState.Placed;
-        public bool IsRecording => isActiveAndEnabled && lens && Device && Device.isActiveAndEnabled;
+        public bool IsRecording => isActiveAndEnabled && lens && Device && Device.isActiveAndEnabled
+            && Device.State != CameraDeviceState.Broken;
         public bool ControlsVisible { get; private set; }
         private bool IsHeldByPlayer => device && device.Owner && !device.Owner.autonomousMovement;
+        private PlayerHand HoldingHand => IsHeldByPlayer ? device.Owner.HandHolding(device) : null;
         public bool IsAiming => IsHeldByPlayer && isActiveAndEnabled && liveCamera && lens
-            && Mouse.current != null && Mouse.current.rightButton.isPressed;
+            && HoldingHand?.IsHoldActionActive == true && !(playerAttack && playerAttack.IsUsingCamera(device));
         public RenderTexture LiveTexture => liveTexture;
         public int RecordedHits => Device.RecordedHits;
         // Round completion is not evidence: an unseen fatal event must still report NO.
         public bool ReportReady => subjects != null && Array.Exists(subjects, subject => subject && subject.IsDead);
         public string ReportText => "Camera ID: " + Device.Id
             + "\nCamera owner: " + (Device.Owner ? Device.Owner.name : "NONE")
+            + "\nCamera state: " + Device.State.ToString().ToUpperInvariant()
+            + (Device.State == CameraDeviceState.Broken ? " (diagnostic history only)" : "")
             + "\nHits recorded: " + Device.RecordedHits
             + "\nEvents recorded: " + Device.Events.Count
             + "\nDeath recorded: " + (Device.DeathRecorded ? "YES" : "NO")
+            + "\nCameraBash recorded: " + Device.RecordedCameraBashes
+            + "\nSeverings recorded: " + Device.RecordedSeverings
+            + "\nLimbs recorded: " + (Device.RecordedSeverings > 0 ? Device.RecordedLimbNames : "NONE")
+            + "\nReport weight: " + Device.ReportWeight.ToString("0.00")
             + "\nLast recorded distance: " + (Device.LastEventDistance.HasValue
-                ? Device.LastEventDistance.Value.ToString("0.00") + " m" : "N/A");
+                ? Device.LastEventDistance.Value.ToString("0.00") + " m" : "N/A")
+            + "\n" + EvidenceText;
+        public string EvidenceText => "Last event light: " + (Device.Events.Count > 0
+            ? Device.Events[Device.Events.Count - 1].LightLevel.ToString("0.0") + "/100 "
+                + Device.Events[Device.Events.Count - 1].Visibility.ToString().ToUpperInvariant() : "N/A")
+            + "   Blood seen: " + BloodSeenCount
+            + "\nLast event quality: " + (Device.Events.Count > 0
+                ? (Device.Events[Device.Events.Count - 1].Clarity * 100f).ToString("0") + "%" : "N/A");
+        public float? VisibleTargetLightLevel
+        {
+            get
+            {
+                if (!IsHeldByPlayer || !IsRecording || subjects == null) return null;
+                foreach (Damageable target in subjects)
+                {
+                    if (!target || target.IsDead || target.gameObject == device.Owner.gameObject) continue;
+                    Hurtbox torso = Array.Find(target.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
+                    if (torso && CanSee(torso.transform.position)) return GetLightLevel(torso.transform.position);
+                }
+                return null;
+            }
+        }
+        public string LightReadout
+        {
+            get
+            {
+                if (!IsHeldByPlayer) return string.Empty;
+                float here = GetLightLevel(Device.Owner.transform.position);
+                float? target = VisibleTargetLightLevel;
+                return "LIGHT HERE: " + here.ToString("0") + "/100 " + LightSource.Classify(here).ToString().ToUpperInvariant()
+                    + "\nTARGET LIGHT: " + (target.HasValue
+                        ? target.Value.ToString("0") + "/100   QUALITY: " + target.Value.ToString("0") + "%"
+                        : "N/A   QUALITY: N/A (OFF CAMERA)");
+            }
+        }
+        private int BloodSeenCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (var observation in Device.BloodEvents) if (observation.Visible) count++;
+                return count;
+            }
+        }
         public string LastResult => Time.unscaledTime - resultTime < 1f ? "REC EVENT" : "STANDBY";
 
         private GUIStyle label;
@@ -47,6 +97,10 @@ namespace RRM
         private GUIStyle heading;
         private Vector2 controlsScroll;
         private Vector2 reportScroll;
+        private Vector2 hudScroll;
+        private Camera gameCamera;
+        private Rect originalViewport;
+        private float HudHeight => Mathf.Min(144f, Screen.height * 0.32f);
         private float resultTime = float.NegativeInfinity;
         private RenderTexture liveTexture;
         private const float FeedAspect = 4f / 3f;
@@ -58,25 +112,33 @@ namespace RRM
         {
             if (Keyboard.current != null && Keyboard.current.f1Key.wasPressedThisFrame)
                 ControlsVisible = !ControlsVisible;
-            if (!IsAiming || Mouse.current.rightButton.wasPressedThisFrame) return;
+            if (!IsAiming) return;
             Vector2 delta = Mouse.current.delta.ReadValue() * mouseSensitivity;
             Vector3 angles = transform.localEulerAngles;
             float pitch = Mathf.Clamp(Mathf.DeltaAngle(0f, angles.x) - delta.y, minPitch, maxPitch);
-            float yaw = Mathf.Clamp(Mathf.DeltaAngle(0f, angles.y) + delta.x, -maxYaw, maxYaw);
-            transform.localRotation = Quaternion.Euler(pitch, yaw, 0f);
+            transform.localRotation = Quaternion.Euler(pitch, angles.y + delta.x, 0f);
+        }
+
+        public void SetViewRotation(Quaternion rotation)
+        {
+            transform.rotation = rotation;
         }
 
         private void OnEnable()
         {
             if (subjects != null)
                 foreach (Damageable subject in subjects)
-                    if (subject) subject.Damaged += Observe;
+                    if (subject)
+                    {
+                        subject.Damaged += Observe;
+                        if (subject.TryGetComponent(out BloodEvidence evidence)) evidence.Created += ObserveBlood;
+                    }
             RefreshLiveFeed();
         }
 
         internal void RefreshLiveFeed()
         {
-            if (!isActiveAndEnabled || !IsHeldByPlayer || !liveCamera || !lens)
+            if (!IsRecording || !IsHeldByPlayer || !liveCamera || !lens)
             {
                 StopLiveFeed();
                 return;
@@ -99,8 +161,18 @@ namespace RRM
         {
             if (subjects != null)
                 foreach (Damageable subject in subjects)
-                    if (subject) subject.Damaged -= Observe;
+                    if (subject)
+                    {
+                        subject.Damaged -= Observe;
+                        if (subject.TryGetComponent(out BloodEvidence evidence)) evidence.Created -= ObserveBlood;
+                    }
             StopLiveFeed();
+            if (gameCamera)
+            {
+                gameCamera.rect = originalViewport;
+                gameCamera.ResetAspect();
+                gameCamera = null;
+            }
         }
 
         private void StopLiveFeed()
@@ -131,13 +203,26 @@ namespace RRM
 
         public void Observe(DamageEvent hit)
         {
-            if (!IsRecording || !CanSee(hit.Point)) return;
-            Device.Record(hit, Vector3.Distance(lens.position, hit.Point));
+            if ((hit.IsBleeding && !hit.IsFatal) || !IsRecording || !CanSee(hit.Point)) return;
+            Device.Record(hit, Vector3.Distance(lens.position, hit.Point), GetLightLevel(hit.Point));
             resultTime = Time.unscaledTime;
+        }
+
+        public float GetLightLevel(Vector3 point) => LightSource.At(point);
+
+        public CameraDevice.BloodObservation InspectBlood(BloodEvent evidence) =>
+            new CameraDevice.BloodObservation(evidence, IsRecording && evidence.Mark && CanSee(evidence.Position),
+                GetLightLevel(evidence.Position));
+
+        private void ObserveBlood(BloodEvent evidence)
+        {
+            if (IsRecording) Device.RecordBlood(InspectBlood(evidence));
         }
 
         private void LateUpdate()
         {
+            UpdateHudViewport();
+            if (Device.State == CameraDeviceState.Broken) return;
             if (liveCamera)
                 liveCamera.fieldOfView = Camera.HorizontalToVerticalFieldOfView(fieldOfView, FeedAspect);
             if (!lens || !cone) return;
@@ -157,6 +242,26 @@ namespace RRM
             cone.SetPosition(18, origin);
         }
 
+        private void UpdateHudViewport()
+        {
+            if (!gameCamera && IsHeldByPlayer)
+            {
+                gameCamera = device.Owner.viewCamera;
+                if (gameCamera) originalViewport = gameCamera.rect;
+            }
+            if (!gameCamera) return;
+            Rect viewport = originalViewport;
+            if (IsHeldByPlayer)
+            {
+                float inset = viewport.height * HudHeight / Screen.height;
+                viewport.y += inset;
+                viewport.height -= inset;
+            }
+            if (gameCamera.rect == viewport) return;
+            gameCamera.rect = viewport;
+            gameCamera.ResetAspect();
+        }
+
         private void OnGUI()
         {
             if (label == null)
@@ -165,10 +270,18 @@ namespace RRM
                 label.normal.textColor = new Color(0.88f, 0.9f, 0.88f);
                 heading = new GUIStyle(label) { fontSize = 20, fontStyle = FontStyle.Bold };
             }
+            float top = Screen.height - HudHeight;
+            float feedWidth = Mathf.Min(320f, Screen.width * 0.4f, Screen.height * 0.4f * FeedAspect);
+            if (IsHeldByPlayer)
+            {
+                GUI.color = new Color(0.035f, 0.045f, 0.04f, 0.88f);
+                GUI.DrawTexture(new Rect(0, top, Screen.width, HudHeight), Texture2D.whiteTexture);
+                GUI.color = Color.white;
+            }
             if (ControlsVisible)
             {
                 float helpWidth = Mathf.Min(470f, Screen.width - 32f);
-                float helpHeight = Mathf.Min(260f, Screen.height - 32f);
+                float helpHeight = Mathf.Min(400f, Screen.height - 32f);
                 var rect = new Rect((Screen.width - helpWidth) * 0.5f, (Screen.height - helpHeight) * 0.5f,
                     helpWidth, helpHeight);
                 GUI.color = new Color(0.035f, 0.045f, 0.04f, 0.96f);
@@ -177,8 +290,58 @@ namespace RRM
                 GUILayout.BeginArea(new Rect(rect.x + 14f, rect.y + 10f, rect.width - 28f, rect.height - 20f));
                 GUILayout.Label("CONTROLS / F1", heading);
                 controlsScroll = GUILayout.BeginScrollView(controlsScroll);
-                GUILayout.Label("WASD / arrows: move\nMouse: turn character\nRMB + drag: aim handheld camera\n"
-                    + "LMB: melee attack\nF: place / pick up nearby camera\nR: restart room\nF1: close this guide", label);
+                GUILayout.Label("W/S: screen up / down; A/D: screen left / right (strafe)\n"
+                    + "Mouse, no buttons held: turn body toward cursor\n"
+                    + "Space: short release kicks a close reachable target in front; otherwise jumps\n"
+                    + "Kick works with occupied hands; shares attack recovery; no kicks inside grapple\n"
+                    + "Busy/rejected kick never turns into a jump; both actions need ground support\n"
+                    + "Space (hold 0.2 s) or Left Ctrl (hold): crouch at half speed\n"
+                    + "Release both crouch keys to stand when clear; long Space release never kicks/jumps\n"
+                    + "Q: left hand - place / pick up nearby item\nE: right hand - place / pick up nearby item\n"
+                    + "LMB: left hand action\nRMB: right hand action\n"
+                    + "Two-handed axe: Q or E picks up only with BOTH hands empty; Q or E puts it down\n"
+                    + "Axe: press, move mouse, release once; one ordinary damage hit, at most one severed limb\n"
+                    + "RMB + left: RightArm; LMB + right: LeftArm; BOTH + down: Leg\n"
+                    + "Directions are screen-space; arm names refer to the target's anatomical sides\n"
+                    + "Other gestures/clicks: Normal. Pair buttons within the chord window (default 0.12 s)\n"
+                    + "Release BOTH before retrying; movement threshold/tolerance are on the axe\n"
+                    + "Axe gestures replace separate hand holds: no aim, grapple or block\n"
+                    + "Severing needs real contact with the intended attached limb of a living target\n"
+                    + "Leg gesture swings low; nearest contacted surviving leg is chosen\n"
+                    + "Missing requested arm never redirects to the other arm; other contacts do ordinary damage\n"
+                    + "Normal axe, fists, feet, camera and lamp cannot sever\n"
+                    + "Each lost limb bleeds 5% max HP per game minute; sources add, bleeding can kill\n"
+                    + "Moving while bleeding leaves surface trails; no healing or bandages\n"
+                    + "Camera records the cut once and visible bleeding death, not repeated bleeding ticks\n"
+                    + "Lost arm: no action/pickup with it; held item falls intact; two-handed axe drops\n"
+                    + "One or two lost legs: 10% base speed, no jump/kick; gravity still works\n"
+                    + "Severed parts stay in the room until R; cameras retain IDs and records when dropped\n"
+                    + "CharCrafter test: detached proxies only; missing limbs still show on the whole skin\n"
+                    + "Hand click: release before " + (playerAttack ? playerAttack.GetComponent<PlayerController>().handHoldThreshold : 0.22f).ToString("0.##") + " s; longer press = hold, never a release click\n"
+                    + "Camera hand: hold, then move mouse to aim relative to body\n"
+                    + "Release keeps that angle: looking backward stays behind you as you turn\n"
+                    + "Empty hand: short release to punch\n"
+                    + "Both hands empty: hold either button near a target in front to grapple\n"
+                    + "Keep that button held; short click the free hand to punch when allowed\n"
+                    + "Release gripping button to let go; fresh free-hand hold: one wall slam\n"
+                    + "Wall slam needs the target against a wall behind them; no wall = no slam\n"
+                    + "Outside grapple, hold BOTH empty hands: short frontal block window\n"
+                    + "Both holds together choose block, not grab; release both before retrying\n"
+                    + "Block expires while held; rear/late hits hurt; attack recovery cannot be cancelled\n"
+                    + "Grappled: wait for BREAK FREE, then short LMB / RMB; one attempt per cycle\n"
+                    + "Early input uses the attempt; missed openings repeat; no button mashing\n"
+                    + "Lamp: lights in hand or on a surface; hold has no action\n"
+                    + "Camera/lamp hand: short click strikes on release\n"
+                    + "Both hands share windup / strike / recovery; spam never queues attacks\n"
+                    + "Focus loss or item change cancels that hand's pending input\n"
+                    + "Camera/lamp: first character hit breaks it; a miss keeps it; axe is not one-use\n"
+                    + "Broken camera: no feed or recording, zero report weight; other witnesses keep CameraBash\n"
+                    + "Occupied hand places its item, never swaps it; no pickup during a swing\n"
+                    + "Enemy: evade the windup, counter during recovery; it may block or grab\n"
+                    + "Enemy escape/block reactions can fail; your BREAK FREE window is real\n"
+                    + "Death drops held items; survivors can collect the same camera and its records\n"
+                    + "Camera report is a preview: owner updates on pickup; gameplay stays active\n"
+                    + "R: restart room\nF1: close this guide", label);
                 GUILayout.EndScrollView();
                 GUILayout.EndArea();
                 return;
@@ -192,7 +355,6 @@ namespace RRM
             if (!IsHeldByPlayer) return;
             if (liveTexture)
             {
-                float feedWidth = Mathf.Min(320f, Screen.width * 0.4f, Screen.height * 0.4f * FeedAspect);
                 float feedHeight = feedWidth / FeedAspect;
                 var rect = new Rect(Screen.width - feedWidth - 16f, Screen.height - feedHeight - 16f,
                     feedWidth, feedHeight);
@@ -202,19 +364,33 @@ namespace RRM
                 GUI.DrawTexture(rect, liveTexture, ScaleMode.ScaleToFit, false);
             }
             if (!showOverlay) return;
-            float width = Mathf.Min(470f, Screen.width - 32f);
-            GUI.color = new Color(0.035f, 0.045f, 0.04f, 0.88f);
-            GUI.DrawTexture(new Rect(16, 16, width, 145), Texture2D.whiteTexture);
-            GUI.color = Color.white;
-            GUI.Label(new Rect(30, 25, width - 28, 30), "RRM / COMBAT TEST 01", heading);
-            GUI.Label(new Rect(30, 57, width - 28, 24), "TAPE 01   REC " + RecordedHits, label);
+            float width = Screen.width - feedWidth - 36f;
+            float columnWidth = Mathf.Max(80f, (width - 40f) / 3f);
+            GUILayout.BeginArea(new Rect(12f, top + 8f, width, HudHeight - 16f));
+            hudScroll = GUILayout.BeginScrollView(hudScroll);
+            GUILayout.BeginHorizontal();
+            GUILayout.BeginVertical(GUILayout.Width(columnWidth));
+            GUILayout.Label("RRM / COMBAT TEST 01", heading);
+            GUILayout.Label("TAPE 01   REC " + RecordedHits, label);
             string phase = playerAttack ? playerAttack.Phase.ToString().ToUpperInvariant() : "READY";
             string healthText = subjects != null && subjects.Length > 0 && subjects[0]
                 ? "   TARGET " + subjects[0].Health.ToString("0") + "/" + subjects[0].maxHealth.ToString("0") : "";
-            GUI.Label(new Rect(30, 83, width - 28, 24), phase + healthText, label);
+            GUILayout.Label(phase + healthText, label);
+            GUILayout.EndVertical();
+            GUILayout.Space(12f);
+            GUILayout.BeginVertical(GUILayout.Width(columnWidth));
             GUI.color = Time.unscaledTime - resultTime < 0.25f ? RecordingColor : Color.white;
-            GUI.Label(new Rect(30, 111, width - 28, 44), LastResult, label);
+            GUILayout.Label(LastResult, label);
             GUI.color = Color.white;
+            GUILayout.Label(LightReadout, label);
+            GUILayout.EndVertical();
+            GUILayout.Space(12f);
+            GUILayout.BeginVertical(GUILayout.Width(columnWidth));
+            GUILayout.Label(EvidenceText, label);
+            GUILayout.EndVertical();
+            GUILayout.EndHorizontal();
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
         }
 
         private void DrawReport()
@@ -230,7 +406,7 @@ namespace RRM
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
             GUI.color = Color.white;
             GUILayout.BeginArea(new Rect(rect.x + 14f, rect.y + 10f, rect.width - 28f, rect.height - 20f));
-            GUILayout.Label("CAMERA REPORT", heading);
+            GUILayout.Label("CAMERA REPORT / PREVIEW", heading);
             reportScroll = GUILayout.BeginScrollView(reportScroll);
             foreach (CameraRecorder report in reports)
             {
