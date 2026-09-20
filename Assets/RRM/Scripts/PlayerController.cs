@@ -11,6 +11,7 @@ namespace RRM
     public sealed partial class PlayerController : MonoBehaviour
     {
         public enum EnemyState { Idle, Approach, Windup, Attack, Recovery }
+        public enum BodyStance { Standing, Crouching, Prone }
         public InputActionAsset inputActions;
         public Camera viewCamera;
         [FormerlySerializedAs("secondaryControls")] public bool autonomousMovement;
@@ -25,24 +26,29 @@ namespace RRM
         [Min(0.1f)] public float braking = 16f;
         [Min(1f)] public float turnSpeed = 360f;
         [Min(1f)] public float attackTurnSpeed = 35f;
-        [Min(0.05f)] public float jumpHeight = 0.6f;
         [Range(0.4f, 0.9f)] public float crouchHeightScale = 0.65f;
         [Range(0.1f, 1f)] public float crouchSpeedScale = 0.5f;
+        [Range(0.05f, 0.4f)] public float crawlSpeedScale = 0.15f;
+        [Range(0.2f, 0.32f)] public float proneRadius = 0.28f;
+        [Min(0.05f)] public float stanceDoubleTapWindow = 0.25f;
         public LayerMask groundMask = 1;
         [Min(0.01f)] public float handHoldThreshold = 0.22f;
         public bool IsGrounded { get; private set; }
-        public bool IsCrouching { get; private set; }
-        internal float HeightScale => IsCrouching ? capsule.height / standingHeight : 1f;
+        public BodyStance Stance { get; private set; }
+        public bool IsCrouching => Stance == BodyStance.Crouching;
+        public bool IsProne => Stance == BodyStance.Prone;
+        internal float HeightScale => IsProne ? capsule.radius * 2f / standingHeight : capsule.height / standingHeight;
+        internal Quaternion StanceRotation => IsProne ? Quaternion.Euler(90f, 0f, 0f) : Quaternion.identity;
 
         private Rigidbody body;
         private CapsuleCollider capsule;
         private PhysicsMaterial injuredSurface;
+        private PhysicsMaterial standingSurface;
         private Transform bodyVisual;
-        private Vector3 standingCenter, standingVisualScale;
-        private float standingHeight;
-        private bool jumpRequested, crouchHeld;
-        private float spacePressedAt = float.NegativeInfinity;
-        private bool spaceJumpEligible;
+        private Vector3 standingCenter, standingVisualScale, standingVisualPosition;
+        private float standingHeight, standingRadius;
+        private float stanceTapDeadline = float.NegativeInfinity;
+        private bool spaceWaitForRelease;
         private MeleeAttack attack;
         private PlayerHand leftHand;
         private PlayerHand rightHand;
@@ -58,7 +64,8 @@ namespace RRM
         public bool HasHand(HandSide side) => GetComponent<Damageable>().IsAttached(
             side == HandSide.Left ? BodyPart.LeftArm : BodyPart.RightArm);
         public bool HasBothLegs => GetComponent<Damageable>().HasBothLegs;
-        public float LimbMovementScale => HasBothLegs ? 1f : 0.1f;
+        public float LimbMovementScale => HasBothLegs || IsProne ? 1f : 0.1f;
+        private bool HasNoLegs => !health.IsAttached(BodyPart.LeftLeg) && !health.IsAttached(BodyPart.RightLeg);
 
         public PlayerHand HandHolding(Component item)
         {
@@ -103,10 +110,16 @@ namespace RRM
             health = GetComponent<Damageable>();
             capsule = GetComponent<CapsuleCollider>();
             standingHeight = capsule.height;
-            if (autonomousMovement) return;
+            standingRadius = capsule.radius;
+            standingSurface = capsule.sharedMaterial;
             standingCenter = capsule.center;
             bodyVisual = GetComponent<HitFeedback>()?.visual;
-            if (bodyVisual) standingVisualScale = bodyVisual.localScale;
+            if (bodyVisual)
+            {
+                standingVisualScale = bodyVisual.localScale;
+                standingVisualPosition = bodyVisual.localPosition;
+            }
+            if (autonomousMovement) return;
             if (!viewCamera) viewCamera = Camera.main;
             if (!inputActions)
             {
@@ -135,9 +148,8 @@ namespace RRM
             if (health) health.Damaged -= OnGrappleDamage;
             actions?.Disable();
             movement = Vector2.zero;
-            jumpRequested = crouchHeld = IsGrounded = false;
-            spaceJumpEligible = false;
-            spacePressedAt = float.NegativeInfinity;
+            IsGrounded = false;
+            CancelSpaceInput();
             leftHand?.CancelInput();
             rightHand?.CancelInput();
         }
@@ -160,7 +172,7 @@ namespace RRM
                 if (attack && attack.IsBusy) attack.CancelAttack();
                 DropHeldItems();
                 State = EnemyState.Idle;
-                movement = Vector2.zero; jumpRequested = spaceJumpEligible = false;
+                movement = Vector2.zero; CancelSpaceInput();
                 leftHand?.CancelInput(); rightHand?.CancelInput();
                 return;
             }
@@ -174,41 +186,17 @@ namespace RRM
             }
             LeftHand.ReadInput();
             RightHand.ReadInput();
+            movement = CanAct ? Vector2.ClampMagnitude(move.ReadValue<Vector2>(), 1f) : Vector2.zero;
+            ReadStanceInput();
             if (InGrapple) HeldAxe?.CancelInput();
             if ((!HeldAxe || InGrapple) && HandleGrappleInput()) return;
             if (Keyboard.current != null)
             {
-                var space = Keyboard.current.spaceKey;
-                if (space.wasPressedThisFrame)
-                {
-                    spacePressedAt = Time.time;
-                    spaceJumpEligible = IsGrounded && CanAct && HasBothLegs;
-                }
-                spaceJumpEligible &= IsGrounded && CanAct && HasBothLegs && !BlockRecovering && !(attack && attack.IsBusy);
-                bool longPress = Time.time - spacePressedAt >= 0.2f;
-                crouchHeld = CanAct && (Keyboard.current.leftCtrlKey.isPressed
-                    || (space.isPressed && longPress && !float.IsNegativeInfinity(spacePressedAt)));
-                // Resolve context only on a valid short release. A rejected kick never becomes a jump.
-                if (space.wasReleasedThisFrame)
-                {
-                    if (spaceJumpEligible && !longPress)
-                    {
-                        Hurtbox target = attack ? attack.FindKickTarget() : null;
-                        if (target) attack.TryKick(target);
-                        else jumpRequested = true;
-                    }
-                    spaceJumpEligible = false;
-                    spacePressedAt = float.NegativeInfinity;
-                }
+                if (CanAct && Keyboard.current.kKey.wasPressedThisFrame && attack)
+                    attack.TryKick(attack.FindKickTarget());
                 if (Keyboard.current.qKey.wasPressedThisFrame) ToggleHand(LeftHand);
                 else if (Keyboard.current.eKey.wasPressedThisFrame) ToggleHand(RightHand);
             }
-            else
-            {
-                crouchHeld = spaceJumpEligible = false;
-                spacePressedAt = float.NegativeInfinity;
-            }
-            movement = Vector2.ClampMagnitude(move.ReadValue<Vector2>(), 1f);
             aimDirection = transform.forward;
             if (Mouse.current != null && !LeftHand.IsHoldActive && !RightHand.IsHoldActive && viewCamera)
             {
@@ -287,14 +275,9 @@ namespace RRM
             }
             else
             {
-                jumpRequested = spaceJumpEligible = false;
-                // Floor friction otherwise cancels the 0.1-speed motor; its existing braking still stops us.
-                if (!injuredSurface)
-                {
-                    injuredSurface = new PhysicsMaterial("Injured motor")
-                    { staticFriction = 0f, dynamicFriction = 0f, frictionCombine = PhysicsMaterialCombine.Minimum };
-                    capsule.sharedMaterial = injuredSurface;
-                }
+                CancelSpaceInput();
+                if (HasNoLegs) TrySetStance(BodyStance.Prone, true);
+                UpdateMotorSurface();
             }
         }
 
@@ -334,26 +317,13 @@ namespace RRM
         private void FixedUpdate()
         {
             ValidateGrapple();
-            if (InGrapple) { StopGrappleMovement(); return; }
             if (health.IsDead || (attack && attack.IsPaused)) return;
-            if (!autonomousMovement)
-            {
-                UpdateCrouch();
-                // Ground probe follows the existing upright capsule, not its visual body or camera.
-                Vector3 foot = body.position + body.rotation * capsule.center
-                    - Vector3.up * (capsule.height * 0.5f - capsule.radius);
-                IsGrounded = Physics.SphereCast(foot + Vector3.up * 0.03f, capsule.radius * 0.95f,
-                        Vector3.down, out RaycastHit ground, 0.1f, groundMask, QueryTriggerInteraction.Ignore)
-                    && ground.normal.y >= 0.65f && Vector3.Dot(body.linearVelocity, ground.normal) <= 0.1f;
-                if (jumpRequested && IsGrounded && HasBothLegs)
-                {
-                    Vector3 velocity = body.linearVelocity;
-                    velocity.y = Mathf.Sqrt(2f * Mathf.Abs(Physics.gravity.y) * jumpHeight);
-                    body.linearVelocity = velocity;
-                    IsGrounded = false;
-                }
-                jumpRequested = false;
-            }
+            Vector3 foot = body.position + body.rotation * capsule.center
+                - Vector3.up * (IsProne ? 0f : capsule.height * 0.5f - capsule.radius);
+            IsGrounded = Physics.SphereCast(foot + Vector3.up * 0.03f, capsule.radius * 0.95f,
+                    Vector3.down, out RaycastHit ground, 0.12f, groundMask, QueryTriggerInteraction.Ignore)
+                && ground.normal.y >= 0.65f && Vector3.Dot(body.linearVelocity, ground.normal) <= 0.1f;
+            if (IsCaptured) return; // The captor drives the pair once per physics step.
             Vector3 heading = new Vector3(movement.x, 0f, movement.y);
             if (!autonomousMovement && viewCamera)
             {
@@ -362,10 +332,12 @@ namespace RRM
                 heading = Vector3.ClampMagnitude(right * movement.x + up * movement.y, 1f);
             }
             Vector3 desired = heading
-                * (moveSpeed * LimbMovementScale * (IsCrouching ? crouchSpeedScale : 1f) * (attack ? attack.MovementScale : 1f));
+                * (moveSpeed * LimbMovementScale * (IsProne ? crawlSpeedScale : IsCrouching ? crouchSpeedScale : 1f)
+                    * (attack ? attack.MovementScale : 1f) * (GrappleTarget ? grappleMovementScale : 1f));
             Vector3 current = Vector3.ProjectOnPlane(body.linearVelocity, Vector3.up);
             float rate = movement.sqrMagnitude > 0.01f ? acceleration : braking;
             Vector3 change = Vector3.ClampMagnitude(desired - current, rate * Time.fixedDeltaTime);
+            if (GrappleTarget) { MoveGrapplePair(current + change); return; }
             body.AddForce(change, ForceMode.VelocityChange);
             if (autonomousMovement && opponent && attack && attack.IsBusy)
             {
@@ -378,29 +350,116 @@ namespace RRM
                 return;
             }
             float speed = attack && attack.IsBusy ? attackTurnSpeed : turnSpeed;
-            body.MoveRotation(Quaternion.RotateTowards(body.rotation,
-                Quaternion.LookRotation(aimDirection), speed * Time.fixedDeltaTime));
+            Quaternion rotation = Quaternion.RotateTowards(body.rotation,
+                Quaternion.LookRotation(aimDirection), speed * Time.fixedDeltaTime);
+            // The long prone capsule must not rotate through furniture or walls.
+            if (!IsProne || FitsCapsule(capsule.center, capsule.height, capsule.radius, capsule.direction, rotation))
+                body.MoveRotation(rotation);
         }
 
-        private void UpdateCrouch()
+        private void CancelSpaceInput()
         {
-            if (crouchHeld == IsCrouching) return;
-            if (!crouchHeld)
+            stanceTapDeadline = float.NegativeInfinity;
+            spaceWaitForRelease = Keyboard.current?.spaceKey.isPressed == true;
+        }
+
+        private void ReadStanceInput()
+        {
+            var space = Keyboard.current?.spaceKey;
+            if (space == null || !CanAct) { CancelSpaceInput(); return; }
+            if (spaceWaitForRelease)
             {
-                Vector3 top = body.position + body.rotation * capsule.center
-                    + Vector3.up * (capsule.height * 0.5f - capsule.radius);
-                if (Physics.CheckCapsule(top, top + Vector3.up * (standingHeight - capsule.height),
-                    capsule.radius * 0.98f, groundMask, QueryTriggerInteraction.Ignore)) return;
+                if (!space.isPressed) spaceWaitForRelease = false;
+                return;
+            }
+            if (IsCaptured)
+            {
+                stanceTapDeadline = float.NegativeInfinity;
+                if (space.wasPressedThisFrame) TrySpaceEscape();
+                return;
+            }
+            if (BlockRecovering || (attack && attack.IsBusy)) { CancelSpaceInput(); return; }
+            if ((!space.isPressed || space.wasPressedThisFrame) && !float.IsNegativeInfinity(stanceTapDeadline)
+                && Time.time > stanceTapDeadline)
+            {
+                stanceTapDeadline = float.NegativeInfinity;
+                TrySetStance(IsCrouching ? BodyStance.Standing : BodyStance.Crouching);
+            }
+            if (space.wasPressedThisFrame)
+            {
+                if (Time.time <= stanceTapDeadline)
+                {
+                    TrySetStance(BodyStance.Prone);
+                    CancelSpaceInput();
+                    return;
+                }
+                stanceTapDeadline = Time.time + Mathf.Max(0.05f, stanceDoubleTapWindow);
+            }
+        }
+
+        public bool TrySetStance(BodyStance stance, bool forced = false)
+        {
+            if (!CanAct || IsCaptured || (HasNoLegs && stance != BodyStance.Prone)
+                || (stance == BodyStance.Prone && GrappleTarget)
+                || (!forced && (BlockRecovering || (attack && attack.IsBusy)))) return false;
+            if (stance == Stance) return true;
+            bool prone = stance == BodyStance.Prone;
+            float radius = prone ? Mathf.Min(proneRadius, standingRadius) : standingRadius;
+            float height = prone ? standingHeight : stance == BodyStance.Crouching
+                ? Mathf.Max(radius * 2f, standingHeight * crouchHeightScale) : standingHeight;
+            Vector3 center = prone ? new Vector3(standingCenter.x, radius, standingCenter.z)
+                : standingCenter - Vector3.up * ((standingHeight - height) * 0.5f);
+            int axis = prone ? 2 : 1;
+            if (!FitsCapsule(center, height, radius, axis, body.rotation))
+            {
+                if (!forced) return false;
+                // Forced leg loss must stay low even in a space too short for the full prone capsule.
+                height = radius * 2f;
             }
             float oldScale = HeightScale;
-            capsule.height = crouchHeld ? Mathf.Max(capsule.radius * 2f, standingHeight * crouchHeightScale) : standingHeight;
-            capsule.center = standingCenter - Vector3.up * ((standingHeight - capsule.height) * 0.5f);
-            IsCrouching = crouchHeld;
+            capsule.direction = axis;
+            capsule.radius = radius;
+            capsule.height = height;
+            capsule.center = center;
+            Stance = stance;
+            UpdateMotorSurface();
             float scale = HeightScale;
-            // ponytail: compress the blockout body/hurtboxes; replace with a pose when animation exists.
-            if (bodyVisual) bodyVisual.localScale = Vector3.Scale(standingVisualScale, new Vector3(1, scale, 1));
+            // ponytail: rigid prone pose and compressed crouch, replace only when real stance clips exist.
+            if (bodyVisual)
+            {
+                bodyVisual.localScale = Vector3.Scale(standingVisualScale, new Vector3(1, prone ? height / standingHeight : scale, 1));
+                bodyVisual.localPosition = standingVisualPosition + (prone ? new Vector3(0f, radius + 0.02f, -height * 0.5f) : Vector3.zero);
+                bodyVisual.localRotation = StanceRotation;
+            }
             LowerHandItem(LeftHand, scale / oldScale);
             if (RightHand.Item?.Source != LeftHand.Item?.Source) LowerHandItem(RightHand, scale / oldScale);
+            return true;
+        }
+
+        private void UpdateMotorSurface()
+        {
+            // Floor friction otherwise cancels the slow crawl/injured motor; existing braking still stops it.
+            if (IsProne || !HasBothLegs)
+            {
+                if (!injuredSurface) injuredSurface = new PhysicsMaterial("Slow motor")
+                    { staticFriction = 0f, dynamicFriction = 0f, frictionCombine = PhysicsMaterialCombine.Minimum };
+                capsule.sharedMaterial = injuredSurface;
+            }
+            else capsule.sharedMaterial = standingSurface;
+        }
+
+        private bool FitsCapsule(Vector3 center, float height, float radius, int axis, Quaternion rotation)
+        {
+            CapsuleEnds(center, height, radius, axis, rotation, out Vector3 a, out Vector3 b);
+            return !Physics.CheckCapsule(a, b, radius * 0.98f, groundMask, QueryTriggerInteraction.Ignore);
+        }
+
+        private void CapsuleEnds(Vector3 center, float height, float radius, int axis, Quaternion rotation,
+            out Vector3 a, out Vector3 b)
+        {
+            Vector3 half = rotation * (axis == 2 ? Vector3.forward : Vector3.up) * Mathf.Max(0f, height * 0.5f - radius);
+            Vector3 world = body.position + rotation * center;
+            a = world - half; b = world + half;
         }
 
         private static void LowerHandItem(PlayerHand hand, float ratio)
@@ -420,9 +479,7 @@ namespace RRM
                 blockUntil = 0f;
                 ReleaseGrapple();
                 movement = Vector2.zero;
-                jumpRequested = crouchHeld = false;
-                spaceJumpEligible = false;
-                spacePressedAt = float.NegativeInfinity;
+                CancelSpaceInput();
                 leftHand?.CancelInput();
                 rightHand?.CancelInput();
                 HeldAxe?.CancelInput();

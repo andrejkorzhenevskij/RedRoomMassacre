@@ -26,6 +26,7 @@ namespace RRM
             && Device.State != CameraDeviceState.Broken;
         public bool ControlsVisible { get; private set; }
         private bool IsHeldByPlayer => device && device.Owner && !device.Owner.autonomousMovement;
+        private bool HasLiveView => IsRecording && (IsHeldByPlayer || IsPlaced);
         private PlayerHand HoldingHand => IsHeldByPlayer ? device.Owner.HandHolding(device) : null;
         public bool IsAiming => IsHeldByPlayer && isActiveAndEnabled && liveCamera && lens
             && HoldingHand?.IsHoldActionActive == true && !(playerAttack && playerAttack.IsUsingCamera(device));
@@ -138,13 +139,13 @@ namespace RRM
 
         internal void RefreshLiveFeed()
         {
-            if (!IsRecording || !IsHeldByPlayer || !liveCamera || !lens)
+            if (!HasLiveView || !liveCamera || !lens)
             {
                 StopLiveFeed();
                 return;
             }
+            if (IsHeldByPlayer) playerAttack = device.Owner.GetComponent<MeleeAttack>();
             if (liveTexture) return;
-            playerAttack = device.Owner.GetComponent<MeleeAttack>();
             liveTexture = new RenderTexture(640, 480, 24, RenderTextureFormat.ARGB32)
             {
                 name = "Handheld Live Feed",
@@ -292,11 +293,10 @@ namespace RRM
                 controlsScroll = GUILayout.BeginScrollView(controlsScroll);
                 GUILayout.Label("W/S: screen up / down; A/D: screen left / right (strafe)\n"
                     + "Mouse, no buttons held: turn body toward cursor\n"
-                    + "Space: short release kicks a close reachable target in front; otherwise jumps\n"
-                    + "Kick works with occupied hands; shares attack recovery; no kicks inside grapple\n"
-                    + "Busy/rejected kick never turns into a jump; both actions need ground support\n"
-                    + "Space (hold 0.2 s) or Left Ctrl (hold): crouch at half speed\n"
-                    + "Release both crouch keys to stand when clear; long Space release never kicks/jumps\n"
+                    + "Space: single tap toggles stand/crouch; from prone rises to crouch when clear\n"
+                    + "Double Space (0.25 s default): prone/crawl; single waits for the double-tap window\n"
+                    + "Crouch: half speed. Crawl: 15% speed. Low ceilings prevent rising\n"
+                    + "Ctrl has no stance action. K: kick a reachable target, shared recovery, no kicks in grapple/prone\n"
                     + "Q: left hand - place / pick up nearby item\nE: right hand - place / pick up nearby item\n"
                     + "LMB: left hand action\nRMB: right hand action\n"
                     + "Two-handed axe: Q or E picks up only with BOTH hands empty; Q or E puts it down\n"
@@ -314,7 +314,8 @@ namespace RRM
                     + "Moving while bleeding leaves surface trails; no healing or bandages\n"
                     + "Camera records the cut once and visible bleeding death, not repeated bleeding ticks\n"
                     + "Lost arm: no action/pickup with it; held item falls intact; two-handed axe drops\n"
-                    + "One or two lost legs: 10% base speed, no jump/kick; gravity still works\n"
+                    + "One lost leg: 10% upright speed, crawl available; no kicks\n"
+                    + "Both legs lost: forced prone/crawl, cannot rise; gravity still works\n"
                     + "Severed parts stay in the room until R; cameras retain IDs and records when dropped\n"
                     + "CharCrafter test: detached proxies only; missing limbs still show on the whole skin\n"
                     + "Hand click: release before " + (playerAttack ? playerAttack.GetComponent<PlayerController>().handHoldThreshold : 0.22f).ToString("0.##") + " s; longer press = hold, never a release click\n"
@@ -323,12 +324,14 @@ namespace RRM
                     + "Empty hand: short release to punch\n"
                     + "Both hands empty: hold either button near a target in front to grapple\n"
                     + "Keep that button held; short click the free hand to punch when allowed\n"
+                    + "WASD while gripping: slowly drag the pair; walls/closed doors stop both\n"
+                    + "No new grapple from prone, no prone transition while gripping\n"
                     + "Release gripping button to let go; fresh free-hand hold: one wall slam\n"
                     + "Wall slam needs the target against a wall behind them; no wall = no slam\n"
                     + "Outside grapple, hold BOTH empty hands: short frontal block window\n"
                     + "Both holds together choose block, not grab; release both before retrying\n"
                     + "Block expires while held; rear/late hits hurt; attack recovery cannot be cancelled\n"
-                    + "Grappled: wait for BREAK FREE, then short LMB / RMB; one attempt per cycle\n"
+                    + "Grappled: wait for BREAK FREE, then fresh Space (or short LMB / RMB); one attempt per cycle\n"
                     + "Early input uses the attempt; missed openings repeat; no button mashing\n"
                     + "Lamp: lights in hand or on a surface; hold has no action\n"
                     + "Camera/lamp hand: short click strikes on release\n"
@@ -336,6 +339,7 @@ namespace RRM
                     + "Focus loss or item change cancels that hand's pending input\n"
                     + "Camera/lamp: first character hit breaks it; a miss keeps it; axe is not one-use\n"
                     + "Broken camera: no feed or recording, zero report weight; other witnesses keep CameraBash\n"
+                    + "Placed active camera: fixed world view stays live; pickup keeps its ID and evidence\n"
                     + "Occupied hand places its item, never swaps it; no pickup during a swing\n"
                     + "Enemy: evade the windup, counter during recovery; it may block or grab\n"
                     + "Enemy escape/block reactions can fail; your BREAK FREE window is real\n"
@@ -346,14 +350,7 @@ namespace RRM
                 GUILayout.EndArea();
                 return;
             }
-            if (ReportReady)
-            {
-                DrawReport();
-                return;
-            }
-            // Until round completion, placed recording has no remote video or event diagnostics.
-            if (!IsHeldByPlayer) return;
-            if (liveTexture)
+            if (HasLiveView && liveTexture)
             {
                 float feedHeight = feedWidth / FeedAspect;
                 var rect = new Rect(Screen.width - feedWidth - 16f, Screen.height - feedHeight - 16f,
@@ -363,6 +360,12 @@ namespace RRM
                 GUI.color = Color.white;
                 GUI.DrawTexture(rect, liveTexture, ScaleMode.ScaleToFit, false);
             }
+            if (ReportReady)
+            {
+                DrawReport();
+                return;
+            }
+            if (!IsHeldByPlayer) return;
             if (!showOverlay) return;
             float width = Screen.width - feedWidth - 36f;
             float columnWidth = Mathf.Max(80f, (width - 40f) / 3f);

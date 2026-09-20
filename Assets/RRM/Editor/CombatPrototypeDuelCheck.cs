@@ -201,7 +201,7 @@ namespace RRM.Editor
             Require(!controller.InGrapple && !enemy.InGrapple && !attack.IsBusy
                 && controller.LeftHand.State == HandState.Empty && controller.RightHand.State == HandState.Empty,
                 "Death cancels actions and releases both hands");
-            Require(device.Id == id && !device.Owner && !device.transform.parent && recorder.IsRecording && !recorder.LiveTexture
+            Require(device.Id == id && !device.Owner && !device.transform.parent && recorder.IsRecording && recorder.LiveTexture
                 && !lamp.Owner && !lamp.transform.parent && lamp.lightSource.isActiveAndEnabled && lamp.lightSource.pointLight.enabled,
                 "Death leaves same camera/history and visible working lamp detached in world");
             Require(witness.GetComponent<CameraDevice>().Events.Any(hit => hit.Damage.Source == enemy.gameObject

@@ -192,11 +192,10 @@ namespace RRM.Editor
             yield return 0.1f;
             foreach (float wait in CheckTrailPixels(evidence, "bleed-platform")) yield return wait;
 
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
-            yield return 0.05f;
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-            yield return 0.2f;
-            Require(!human.IsGrounded, "Arm loss still permits a real jump");
+            player.position += Vector3.up * 1.5f;
+            player.transform.position = player.position;
+            yield return 0.06f;
+            Require(!human.IsGrounded, "Raised falling fixture is unsupported");
             marks = evidence.Marks.Count;
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
             yield return 0.2f;
@@ -246,7 +245,7 @@ namespace RRM.Editor
                 && !deathDevice.Events[0].Damage.SeveredPart.HasValue && deathDevice.ReportWeight == 0f,
                 "Visible bleeding death is one death, not a weapon hit, severing or score farm");
             Require(!device.Owner && device.Id == id && device.Events.Count >= history && recorder.IsRecording
-                && !recorder.LiveTexture, "Bleeding death drops intact camera and preserves history without remote feed");
+                && recorder.LiveTexture, "Bleeding death drops intact camera and preserves history with live placed feed");
             health.TickBleeding(600d);
             yield return 0.2f;
             health.Damaged -= CountDeath;

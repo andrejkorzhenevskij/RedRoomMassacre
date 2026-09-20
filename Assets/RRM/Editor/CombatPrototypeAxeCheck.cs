@@ -212,12 +212,11 @@ namespace RRM.Editor
             yield return 0.1f;
             Require(!attack.IsBusy && axe.LastIntent == ChopIntent.Normal, "Busy press released after recovery never queues another swing");
 
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl));
-            yield return 0.15f;
-            Require(controller.IsCrouching && Mathf.Abs(axe.transform.localPosition.y - 1.08f * controller.crouchHeightScale) < 0.03f,
+            float uprightAxeHeight = axe.transform.localPosition.y;
+            foreach (float wait in SpaceTap()) yield return wait;
+            Require(controller.IsCrouching && axe.transform.localPosition.y < uprightAxeHeight * 0.8f,
                 "One shared item follows crouch once, not once per hand");
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-            yield return 0.15f;
+            foreach (float wait in SpaceTap()) yield return wait;
 
             // Cancel a press on placement/re-pickup and on focus loss.
             InputSystem.QueueStateEvent(mouse, new MouseState { buttons = 2, delta = new Vector2(-100, 0) });

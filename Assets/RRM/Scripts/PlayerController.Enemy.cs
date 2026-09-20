@@ -42,6 +42,8 @@ namespace RRM
             if (IsCaptured) { TryEnemyEscape(); return; }
             if (GrappleTarget)
             {
+                Vector3 drag = -transform.forward;
+                movement = new Vector2(drag.x, drag.z);
                 if (Time.time >= nextDecision && !attack.IsBusy)
                 {
                     nextDecision = Time.time + Mathf.Max(0.02f, decisionInterval);
@@ -77,6 +79,11 @@ namespace RRM
             PlayerHand hand = RightHand.Item?.Source is CameraDevice ? LeftHand : RightHand;
             if (!hand.IsAvailable) hand = hand == LeftHand ? RightHand : LeftHand;
             float reach = Mathf.Min(attackDistance, attack.HandReach(hand) + 0.3f);
+            if (opponent.GetComponent<PlayerController>()?.IsProne == true)
+            {
+                Vector3 extents = opponent.GetComponent<Collider>().bounds.extents;
+                reach += Mathf.Max(0f, Vector3.Dot(extents, new Vector3(Mathf.Abs(direction.x), 0f, Mathf.Abs(direction.z))) - 0.3f);
+            }
             if (offset.magnitude <= reach)
             {
                 if (Vector3.Dot(transform.forward, direction) < 0.97f || Time.time < nextDecision

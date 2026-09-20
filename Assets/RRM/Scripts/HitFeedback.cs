@@ -20,12 +20,14 @@ namespace RRM
         private float recoil;
         private float flash;
         private Vector3 recoilAxis;
+        private PlayerController controller;
 
         private void Awake()
         {
             properties = new MaterialPropertyBlock();
             health = GetComponent<Damageable>();
             attack = GetComponent<MeleeAttack>();
+            controller = GetComponent<PlayerController>();
             body = GetComponent<Rigidbody>();
             audioSource = GetComponent<AudioSource>();
         }
@@ -67,7 +69,8 @@ namespace RRM
         {
             recoil = Mathf.MoveTowards(recoil, 0f, 65f * Time.deltaTime);
             flash = Mathf.Max(0f, flash - Time.deltaTime);
-            if (visual) visual.localRotation = Quaternion.AngleAxis(recoil, recoilAxis);
+            if (visual) visual.localRotation = Quaternion.AngleAxis(recoil, recoilAxis)
+                * (controller ? controller.StanceRotation : Quaternion.identity);
             if (bodyRenderers == null) return;
             foreach (Renderer part in bodyRenderers)
             {

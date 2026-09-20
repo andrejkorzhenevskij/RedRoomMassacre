@@ -55,7 +55,7 @@ namespace RRM.Editor
             InputSystem.QueueStateEvent(mouse, new MouseState());
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
             yield return 0.1f;
-            Require(!controller.HeldCamera && recorder.IsPlaced && !recorder.LiveTexture, "Q sets camera down before grapple");
+            Require(!controller.HeldCamera && recorder.IsPlaced && recorder.LiveTexture, "Q sets camera down before grapple");
             GameObject.Find("Portable Lamp 1").transform.position = start + new Vector3(0.55f, 0, 0.35f);
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.E));
             yield return 0.1f;
@@ -96,8 +96,9 @@ namespace RRM.Editor
                 InputSystem.QueueStateEvent(mouse, new MouseState { buttons = 3 });
                 yield return 0.55f;
                 Require(controller.InGrapple && enemy.InGrapple && !attack.IsBusy && damageEvents == 0
-                    && Vector3.Distance(player.position, lockedPlayer) < 0.03f && Vector3.Distance(dummyBody.position, lockedEnemy) < 0.03f,
-                    "Pair stays at contact under movement/jump/item input; free-hand hold has no damage");
+                    && Vector3.Distance(player.position, lockedPlayer) > 0.05f
+                    && Vector3.Distance(dummyBody.position - player.position, lockedEnemy - lockedPlayer) < 0.1f,
+                    "Pair drags at contact under movement/stance/item input; free-hand hold has no damage");
                 InputSystem.QueueStateEvent(mouse, new MouseState { buttons = grip });
                 InputSystem.QueueStateEvent(keyboard, new KeyboardState());
                 yield return 0.5f;
@@ -107,8 +108,8 @@ namespace RRM.Editor
                 yield return 0.55f;
                 Require(damageEvents == 1 && dummy.Health < 90 && dummy.Health >= 90 - attack.fistDamage
                     && controller.GrappleTarget == enemy, "Free-hand real melee hits retained target once without releasing it");
-                Require(device.RecordedHits == records + 1 && !recorder.LiveTexture && recorder.IsRecording,
-                    "Placed camera witnesses actual grapple DamageEvent without remote feed");
+                Require(device.RecordedHits == records + 1 && recorder.LiveTexture && recorder.IsRecording,
+                    "Placed camera witnesses actual grapple DamageEvent with live placed feed");
                 Require(!attack.TryHandAttack(grip == 1 ? controller.LeftHand : controller.RightHand)
                     && !attack.TryAttack(), "Gripping hand and generic attack command cannot bypass grapple rules");
                 Capture("grapple-" + grip + ".png", 1280, 800);

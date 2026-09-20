@@ -192,7 +192,7 @@ namespace RRM.Editor
                 }
                 Require(victimController.RightHand.State == HandState.Unavailable && victimController.LeftHand.IsAvailable
                     && !device.Owner && device.Id == cameraId && device.RecordedHits >= priorHistory
-                    && !device.transform.parent && device.GetComponent<Rigidbody>() && !recorder.LiveTexture && recorder.IsRecording,
+                    && !device.transform.parent && device.GetComponent<Rigidbody>() && recorder.LiveTexture && recorder.IsRecording,
                     "Right arm drops same camera with ID/history; no handheld feed, recording remains active");
                 Require(witnessDevice.RecordedSeverings == before + 1, "Placed camera observes one sever result in the same damage event");
                 Require(!device.TryPickup(victimController, HandSide.Right)
@@ -248,7 +248,7 @@ namespace RRM.Editor
                     yield return 0.05f;
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState());
                     yield return 0.15f;
-                    Require(player.position.y < 0.08f, "Native Space does not jump after leg loss");
+                    Require(player.position.y < 0.08f, "Stance input leaves injured actor on its support");
                 }
                 else
                 {
@@ -310,16 +310,14 @@ namespace RRM.Editor
             player.transform.rotation = player.rotation;
             Physics.SyncTransforms();
             yield return 0.1f;
-            Require(!human.GetComponent<MeleeAttack>().FindKickTarget(), "Attacker behind player cannot steal Space jump context");
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
-            yield return 0.05f;
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-            yield return 0.04f;
-            Require(sourceAttack.TryHandAttack(source.RightHand, ChopIntent.Leg), "Shared low chop during player's real jump");
+            player.position += Vector3.up * 0.35f;
+            player.transform.position = player.position;
+            Physics.SyncTransforms();
+            Require(sourceAttack.TryHandAttack(source.RightHand, ChopIntent.Leg), "Shared low chop against a falling fixture");
             float deadline = Time.time + 0.5f;
             while (human.HasBothLegs && Time.time < deadline) yield return 0.02f;
             Require(!human.HasBothLegs && player.position.y > 0.1f && player.useGravity && !player.isKinematic,
-                "Leg loss during actual jump leaves the player airborne under gravity: " + player.position);
+                "Leg loss during falling leaves the player airborne under gravity: " + player.position);
             Capture("sever-airborne.png", 1280, 800);
             yield return 1f;
             Require(human.IsGrounded && player.position.y < 0.08f, "Injured airborne player lands normally, without teleport");

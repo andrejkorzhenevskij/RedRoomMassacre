@@ -153,8 +153,8 @@ namespace RRM.Editor
                         "Arm loss drops the same two-handed item and prevents one-handed pickup");
                 else if (part != BodyPart.LeftLeg)
                     Require(device.Id == id && device.Owner == null && device.State == CameraDeviceState.Placed
-                        && enemy.HandHolding(device) == null && !recorder.LiveTexture,
-                        "Arm loss drops same CameraDevice and removes remote feed");
+                        && enemy.HandHolding(device) == null && recorder.LiveTexture,
+                        "Arm loss drops same CameraDevice and retains placed live feed");
                 else Require(!enemy.HasBothLegs && enemy.LimbMovementScale == 0.1f
                     && !enemy.GetComponent<MeleeAttack>().TryKick(enemy.GetComponent<MeleeAttack>().FindKickTarget()),
                     "Leg loss preserves slow movement and kick prohibition");
@@ -240,16 +240,16 @@ namespace RRM.Editor
                 if (part == BodyPart.LeftLeg)
                 {
                     Require(human.LimbMovementScale == 0.1f, "Player leg penalty is still a single 0.1 multiplier");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
+                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.K));
                     yield return 0.05f;
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState());
                     yield return 0.3f;
                     Require(human.IsGrounded && !human.GetComponent<MeleeAttack>().IsBusy,
-                        "Injured Player cannot jump or kick after a real leg cut");
+                        "Injured Player cannot kick after a real leg cut");
                 }
                 else Require(device.Id == id && device.State == CameraDeviceState.Placed && !device.Owner
-                    && !recorder.LiveTexture && !human.HasHand(part == BodyPart.LeftArm ? HandSide.Left : HandSide.Right),
-                    "Player arm loss drops the same camera, removes feed and makes the hand unavailable");
+                    && recorder.LiveTexture && !human.HasHand(part == BodyPart.LeftArm ? HandSide.Left : HandSide.Right),
+                    "Player arm loss drops the same camera, retains placed feed and makes the hand unavailable");
                 Capture("charcrafter-player-cut-" + part + ".png", 1280, 800);
             }
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
@@ -328,46 +328,49 @@ namespace RRM.Editor
             Vector3 standingLens = recorder.lens.position - player.transform.position;
             float standingHeight = human.GetComponent<CapsuleCollider>().height;
             Quaternion heldAngle = recorder.transform.localRotation;
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.LeftCtrl));
+            foreach (float wait in SpaceTap()) yield return wait;
+            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
             yield return 0.4f;
             Require(human.IsCrouching && human.GetComponent<CapsuleCollider>().height < standingHeight * 0.8f
                 && recorder.lens.position.y - player.transform.position.y < standingLens.y - 0.15f
                 && player.linearVelocity.z > 0.5f && player.linearVelocity.z < human.moveSpeed * 0.65f,
                 "Moving crouch lowers actual collider/body/wrist and halves screen-up speed");
             Capture("charcrafter-player-crouch.png", 1280, 800);
+            foreach (float wait in SpaceTap()) yield return wait;
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
-            yield return 0.3f;
-            Require(!human.IsCrouching && player.linearVelocity.z > human.moveSpeed * 0.85f,
-                "Releasing crouch restores normal screen movement speed");
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
-            yield return 0.05f;
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
-            yield return 0.2f;
-            Require(!human.IsGrounded && player.position.y > 0.2f && player.linearVelocity.z > 1f
-                && recorder.LiveTexture && Quaternion.Angle(recorder.transform.localRotation, heldAngle) < 0.1f,
-                "Moving jump keeps momentum and live wrist camera with the same independent angle");
-            Capture("charcrafter-player-jump.png", 1280, 800);
+            yield return 0.5f;
+            Require(!human.IsCrouching && player.linearVelocity.z > human.moveSpeed * 0.8f,
+                $"Standing restores normal screen movement speed: {human.Stance}, velocity={player.linearVelocity}");
             InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-            yield return 0.7f;
-            Require(human.IsGrounded, "Native Player body lands with the original physics controller");
+            foreach (float wait in SpaceTap(true)) yield return wait;
+            Require(human.IsProne && recorder.LiveTexture && Quaternion.Angle(recorder.transform.localRotation, heldAngle) < 0.1f,
+                "Prone keeps the live wrist camera with the same independent angle");
+            Capture("charcrafter-player-prone.png", 1280, 800);
+            foreach (float wait in SpaceTap()) yield return wait;
+            foreach (float wait in SpaceTap()) yield return wait;
             string id = device.Id;
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
             yield return 0.1f;
             Vector3 placed = device.transform.position;
             Quaternion placedAngle = device.transform.rotation;
-            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.S, Key.LeftCtrl));
+            Vector3 pickupOrigin = player.position;
+            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.S));
             yield return 0.3f;
-            Require(device.State == CameraDeviceState.Placed && !recorder.LiveTexture
+            Require(device.State == CameraDeviceState.Placed && recorder.LiveTexture
                 && Vector3.Distance(placed, device.transform.position) < 0.001f
                 && Quaternion.Angle(placedAngle, device.transform.rotation) < 0.1f,
-                "Placed camera stays fixed and has no remote feed while Player moves/crouches");
+                "Placed camera stays fixed and has live placed feed while Player moves/crouches");
             InputSystem.QueueStateEvent(keyboard, new KeyboardState());
             yield return 0.2f;
+            player.position = pickupOrigin;
+            player.transform.position = pickupOrigin;
+            player.linearVelocity = Vector3.zero;
+            Physics.SyncTransforms();
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.E));
             yield return 0.15f;
             Require(device.Id == id && human.RightHand.Item?.Source == device && recorder.LiveTexture
                 && Vector3.Distance(device.transform.position, visual.rightHand.position) < 0.25f,
-                "E retrieves the same camera into the actual right wrist with live feed");
+                $"E retrieves same camera into right wrist: item={human.RightHand.Item?.Source}, owner={device.Owner}, wrist distance={Vector3.Distance(device.transform.position, visual.rightHand.position)}");
             Capture("charcrafter-player.png", 1280, 800);
             ReadLiveFrame("charcrafter-player-feed.png");
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
@@ -376,7 +379,7 @@ namespace RRM.Editor
             CharCrafterIntegration.Validate(player.gameObject);
             Require(Object.FindObjectsByType<CharCrafterVisual>().Length == 2,
                 "Scene reload uses the saved Player/Dummy prefabs without duplicate visual bodies");
-            Debug.Log("RRM CHAR PLAYER CHECK PASSED: screen WASD, mouse body turn, hand aim, crouch/jump, placement/pickup and restart.");
+            Debug.Log("RRM CHAR PLAYER CHECK PASSED: screen WASD, mouse body turn, hand aim, crouch/prone, placement/pickup and restart.");
         }
 
         private static int ColorDelta(Color32 a, Color32 b) =>

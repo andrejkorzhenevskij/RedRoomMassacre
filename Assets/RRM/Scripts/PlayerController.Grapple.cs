@@ -11,6 +11,7 @@ namespace RRM
         [Min(0.1f)] public float escapeWindow = 0.3f;
         [Min(0.1f)] public float escapeRepeatDelay = 0.45f;
         [Min(0f)] public float escapeProtection = 1.2f;
+        [Range(0.1f, 0.6f)] public float grappleMovementScale = 0.4f;
         [Header("Timed block")]
         [Min(0.02f)] public float blockWindow = 0.2f;
         [Min(0f)] public float blockRecovery = 0.35f;
@@ -28,11 +29,11 @@ namespace RRM
         public bool EscapeWindowOpen => IsCaptured && CycleAge >= Delay && CycleAge < Delay + Window;
         public string EscapeHint => !IsCaptured ? string.Empty : attemptedCycle == EscapeCycle
             ? "GRABBED: attempt used; wait for next cycle"
-            : EscapeWindowOpen ? "BREAK FREE: short LMB / RMB" : "GRABBED: wait for the opening";
+            : EscapeWindowOpen ? "BREAK FREE: SPACE (or short LMB / RMB)" : "GRABBED: wait for the opening";
 
         private bool grappleLocked;
         private RigidbodyConstraints beforeGrappleConstraints;
-        private Vector3 grappleAnchor;
+        private Vector3 grappleOffset;
         private float escapeEpoch, protectedUntil, escapePressTime;
         private int attemptedCycle = -1, escapePressCycle;
         private HandSide escapePressHand;
@@ -46,7 +47,7 @@ namespace RRM
         // Commands are shared by local input and future enemy decisions, not by two combat implementations.
         public bool TryBeginGrapple(HandSide side, PlayerController target = null)
         {
-            if (!CanAct || InGrapple || BlockRecovering || !attack || !attack.isActiveAndEnabled || attack.IsBusy || IsCrouching
+            if (!CanAct || InGrapple || BlockRecovering || !attack || !attack.isActiveAndEnabled || attack.IsBusy || IsProne
                 || LeftHand.State != HandState.Empty || RightHand.State != HandState.Empty) return false;
             if (!target)
             {
@@ -65,6 +66,7 @@ namespace RRM
             GrappleTarget = target;
             GrappleHand = side;
             target.Captor = this;
+            grappleOffset = target.body.position - body.position;
             LockGrapple(); target.LockGrapple();
             target.ResetEscapeCycle();
             // Keep the gripping press; discard the free hand and all pre-grab victim input.
@@ -75,7 +77,7 @@ namespace RRM
 
         private bool CanGrab(PlayerController target)
         {
-            if (!target || target == this || !target.CanAct || target.InGrapple || target.IsCrouching
+            if (!target || target == this || !target.CanAct || target.InGrapple || target.IsProne
                 || !target.capsule || !target.capsule.enabled || !capsule.enabled
                 || Time.time < target.protectedUntil || Mathf.Abs(body.linearVelocity.y) > 0.5f
                 || Mathf.Abs(target.body.linearVelocity.y) > 0.5f) return false;
@@ -96,20 +98,38 @@ namespace RRM
             blockUntil = 0f;
             grappleLocked = true;
             beforeGrappleConstraints = body.constraints;
-            grappleAnchor = body.position;
-            // ponytail: stationary pair at contact; no dragging, joints or pose snapping.
-            body.constraints |= RigidbodyConstraints.FreezePositionX | RigidbodyConstraints.FreezePositionZ
-                | RigidbodyConstraints.FreezeRotation;
-            StopGrappleMovement();
-        }
-
-        private void StopGrappleMovement()
-        {
-            movement = Vector2.zero;
-            jumpRequested = spaceJumpEligible = crouchHeld = false;
-            spacePressedAt = float.NegativeInfinity;
+            body.constraints |= RigidbodyConstraints.FreezeRotation;
+            CancelSpaceInput();
             body.linearVelocity = new Vector3(0f, body.linearVelocity.y, 0f);
             body.angularVelocity = Vector3.zero;
+        }
+
+        private void MoveGrapplePair(Vector3 velocity)
+        {
+            var target = GrappleTarget;
+            if (!target) return;
+            // Equal swept velocities preserve the contact offset; physics still owns both positions and gravity.
+            float travel = velocity.magnitude * Time.fixedDeltaTime;
+            if (travel > 0.0001f)
+            {
+                Vector3 direction = velocity.normalized;
+                float allowed = Mathf.Min(DragClearance(direction, travel), target.DragClearance(direction, travel));
+                velocity *= allowed / travel;
+            }
+            body.linearVelocity = new Vector3(velocity.x, body.linearVelocity.y, velocity.z);
+            target.body.linearVelocity = new Vector3(velocity.x, target.body.linearVelocity.y, velocity.z);
+            body.angularVelocity = target.body.angularVelocity = Vector3.zero;
+        }
+
+        private float DragClearance(Vector3 direction, float distance)
+        {
+            CapsuleEnds(capsule.center, capsule.height, capsule.radius, capsule.direction, body.rotation,
+                out Vector3 a, out Vector3 b);
+            foreach (RaycastHit hit in Physics.CapsuleCastAll(a, b, capsule.radius * 0.98f, direction,
+                distance + 0.02f, attack.obstructionMask, QueryTriggerInteraction.Ignore))
+                if (Vector3.Dot(hit.normal, direction) < -0.01f)
+                    distance = Mathf.Min(distance, Mathf.Max(0f, hit.distance - 0.02f));
+            return distance;
         }
 
         private void ValidateGrapple()
@@ -117,8 +137,9 @@ namespace RRM
             if (!grappleLocked) return;
             var other = GrappleTarget ? GrappleTarget : Captor;
             if (!CanAct || !other || !other.CanAct || !other.grappleLocked || !attack || !attack.isActiveAndEnabled
-                || (GrappleTarget && (LeftHand.Item != null || RightHand.Item != null))
-                || Vector3.Distance(body.position, grappleAnchor) > 0.2f
+                || IsProne || other.IsProne
+                || (GrappleTarget && (LeftHand.State != HandState.Empty || RightHand.State != HandState.Empty
+                    || Vector3.Distance(other.body.position - body.position, grappleOffset) > 0.25f))
                 || Vector3.Distance(body.position, other.body.position) > (GrappleTarget ? grappleRange : other.grappleRange) + 0.15f
                 || !ClearGrapplePath(other)) ReleaseGrapple();
         }
@@ -139,6 +160,7 @@ namespace RRM
             attack?.EndGrappleStrike();
             leftHand?.CancelInput(); rightHand?.CancelInput();
             escapePressEligible = false;
+            CancelSpaceInput();
             movement = Vector2.zero;
         }
 
@@ -169,6 +191,16 @@ namespace RRM
             protectedUntil = Time.time + Mathf.Max(0f, escapeProtection);
             ReleaseGrapple();
             return true;
+        }
+
+        private void TrySpaceEscape()
+        {
+            if (!CanAct || !IsCaptured || attemptedCycle == EscapeCycle) return;
+            attemptedCycle = EscapeCycle;
+            escapePressEligible = false;
+            if (!EscapeWindowOpen) return;
+            protectedUntil = Time.time + Mathf.Max(0f, escapeProtection);
+            ReleaseGrapple();
         }
 
         internal bool CanStrikeWithHand(HandSide side) => CanAct && HasHand(side) && !IsCaptured && !BlockRecovering
@@ -209,7 +241,7 @@ namespace RRM
             if (!GrappleTarget || !ClearGrapplePath(GrappleTarget)) return false;
             Vector3 direction = Vector3.ProjectOnPlane(GrappleTarget.body.position - body.position, Vector3.up).normalized;
             var target = GrappleTarget;
-            // ponytail: contact-only slam against a wall behind the victim; no dragging or root-motion system.
+            // Contact-only slam against the wall behind the victim; no root-motion lunge.
             float radius = target.capsule.radius * Mathf.Max(target.transform.lossyScale.x, target.transform.lossyScale.z);
             return Physics.SphereCast(target.body.position + Vector3.up * 1.08f, radius * 0.95f,
                 direction, out wall, radius * 0.05f + attack.wallContactGap, attack.obstructionMask,

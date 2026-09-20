@@ -160,8 +160,8 @@ namespace RRM.Editor
                 Require(damageEvents == 1 && 90 - dummy.Health > attack.fistDamage && controller.InGrapple,
                     $"Either free hand delivers one stronger wall contact: health={dummy.Health}, events={damageEvents}");
                 Require(Vector3.Distance(before, dummyBody.position) < 0.04f, "Contact-only slam does not teleport or push through wall");
-                Require(device.RecordedHits == records + 1 && !recorder.LiveTexture && recorder.IsRecording,
-                    "Placed witness records normal slam DamageEvent without remote feed");
+                Require(device.RecordedHits == records + 1 && recorder.LiveTexture && recorder.IsRecording,
+                    "Placed witness records normal slam DamageEvent with live placed feed");
                 var evidence = dummy.GetComponent<BloodEvidence>();
                 Require(evidence.Marks.Count > marks && Mathf.Abs(evidence.Marks[evidence.Marks.Count - 1].Mark.transform.forward.y) < 0.1f,
                     "Existing blood system leaves persistent wall evidence at contact");

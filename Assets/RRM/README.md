@@ -1,5 +1,67 @@
 # RRM technical prototype
 
+## Heavy-body controls (2026-09-17)
+
+This section supersedes older dated verification notes below. Open the saved
+CombatPrototype; do not regenerate its two rooms, doorway, cover, platform or ramp.
+Both actors keep their original CharCrafter rigs, hurtboxes, hands and Rigidbody.
+
+- WASD remains relative to the screen. Free mouse turns the body; hand-held camera
+  direction remains body-relative and independently adjustable with its hand hold.
+- Space single tap: Standing <-> Crouching; Prone -> Crouching when clear.
+- Double Space: Prone. The single action waits until the configurable 0.25 s
+  double-tap window expires and Space is released. Holding has no repeating action.
+- Crouch reduces capsule/body height and speed (default 0.65 height, 0.5 speed).
+  Prone rotates the existing visual into a low prototype pose and uses a horizontal
+  capsule (default radius 0.28 m), with 0.15 crawl speed. Root scale stays unchanged.
+  Full destination clearance is required before rising or voluntarily lying down.
+  Real colliders govern crawling under furniture; gravity and falling remain active.
+- Ctrl no longer changes stance. K preserves the existing kick and shared recovery.
+- LMB/RMB, Q/E, axe gestures, attack timing, F1 and R otherwise stay as documented.
+- While captured, fresh Space attempts escape in the existing timing window, sharing
+  the one-attempt-per-cycle budget with mouse escape. It never queues a stance change.
+  Pre-held Space is discarded; missed windows repeat. No button-mashing bonus.
+- While gripping, WASD drags the pair slowly; walls and blocked doorways stop both.
+  The gripping button must remain held; the free hand keeps its existing actions.
+  Standing/crouching may grab; prone may not. A grip cannot transition to prone.
+- One lost leg: 0.1 upright movement scale, no kicks, crawl remains available.
+  Two lost legs: forced prone and no rising. Crawl uses its own slow multiplier,
+  not a compounded upright penalty. In a cramped forced transition the capsule/pose
+  contracts instead of stretching through the wall. Gravity, bleeding and death stay shared.
+- An active PLACED camera now keeps updating its live feed. Same device, ID, world
+  pose and evidence survive pickup. Broken devices stop rendering and recording.
+
+Verification entry: RRM.Editor.CombatPrototypePlayCheck.RunStanceAndExit.
+It uses native queued keyboard/mouse actions and actual melee/axe contact on the
+saved scene; temporary clearance/closed-door fixtures exist only during the check.
+The older dated runs below describe their historical versions, not current proof.
+No scene builder is called. CharCrafter limb removal is still proxy-only, not a
+segmented living skin. Crouch/prone/dragging have no authored animation or IK.
+
+Graphics-enabled Play Mode passed on 2026-09-17 in an isolated copy of the actual
+CombatPrototype, Unity 6000.6.0f1. Both Editors exited with code 0:
+`Logs/stance-final.log` (RunStanceAndExit) and
+`Logs/stance-charcrafter-regression.log` (RunCharCrafterAndExit).
+The stance run checked delayed single/double input, all stance transitions/speeds,
+real under-cover traversal and blocked rising, wrist height, gravity, placed-feed
+pixel updates, same-device pickup/evidence, actual camera bash/break, mirrored
+dragging, blocked-pair motion, free-hand and fatal grapple punches, Space timing
+escape, both actors' real one/two-leg cuts, legless blood trails, AI hits against
+all three stances, K kick, F1 state and R cleanup. CharCrafter regression also
+checked screen-relative movement under rotated views, independent hand aim,
+either-hand pickup, actual light pixels and contact snapshots, arm/leg proxies,
+bleeding trails, camera occlusion and shared enemy attacks. Core combat/light/
+recording checks passed in both runs. No C# errors or gameplay exceptions.
+
+Captured renders: `Verification/stance-*.png` and refreshed `charcrafter-*.png`.
+Main-camera renders omit IMGUI; F1 was toggled programmatically, not manually
+layout-tested. This is not a long manual feel test or a full rerun of every older
+scenario. The closed doorway/overhead clearance are temporary test fixtures, not
+new level objects. Tight forced-prone contraction and every moving-door/uneven-ground
+dragging edge case are not exhaustively tested. Existing Unity SearchDatabase and
+shadow-atlas diagnostics remain. No desktop builds or Wine were run in this sprint.
+Scene, builder, vendor assets, CameraDevice and damage/evidence code are unchanged.
+
 ## Player visual and screen movement (2026-09-16)
 
 Player now uses the same saved CharCrafter visual/Avatar as Dummy, with its own
@@ -8,12 +70,6 @@ health, physics, camera or skeleton is added. `RRM > CharCrafter > Integrate Pla
 updates only Player.prefab; repeating it validates the result. The existing Dummy
 menu still targets only Dummy. Neither menu rebuilds the room or edits vendor assets.
 
-W/S move toward the top/bottom of the main game view; A/D toward its left/right,
-without turning the body. The directions are projected onto the floor, independently
-of body facing and handheld view. Mouse body turning, hand aim, relative camera
-angles, attack pacing, jump and crouch rules are unchanged. F1 reflects this change.
-Held items follow CharCrafter wrists; a placed camera still has no remote feed.
-
 The previous assignment deliberately excluded Player. Its main remaining limitation
 also applies here: the imported whole body/clothing meshes do not support hiding
 individual limbs. Gameplay severing and detached physical proxies work, but the
@@ -21,34 +77,6 @@ live skin remains intact. Separate prepared body/clothing limb meshes are still
 needed for visible amputation; no Blender edits, bone-zeroing or slicing were added.
 Locomotion/attack animation and finger IK remain outside this prototype; crouch
 uses the existing vertical body compression, not a new skeletal pose.
-
-`RRM.Editor.CombatPrototypePlayCheck.RunCharCrafterAndExit` now includes Player:
-screen WASD under different body/view orientations, actual mouse hand aim and body
-turning, moving crouch/jump, wrist-mounted camera, Q/E placement/pickup and reset.
-Older body-relative control checks and red-blockout pixel assertions are historical,
-not verification of this screen-relative CharCrafter version.
-
-Graphics-enabled Play Mode passed on 2026-09-16 in an isolated copy of the saved
-CombatPrototype (Unity 6000.6.0f1). `Logs/charcrafter-player-play.log` contains
-`RRM CHAR PLAYER CHECK PASSED` and `RRM CHARCRAFTER PLAY CHECK PASSED`.
-The run used queued native keyboard/mouse input and the shared enemy attack command,
-not injected DamageEvents. It checked eight WASD cases (two main-view orientations),
-rear camera aim with mouse body turning, crouch speed/collider/wrist height, moving
-jump and landing, Q/E with the same device ID, and scene reload. The Dummy visual,
-real fist/axe hits, left/right arm and leg sever states/proxies, item drops, light,
-bleeding trails, visible/occluded camera records and reset checks passed again.
-Additional actual enemy axe strikes checked both Player arms and one leg: same
-camera dropped intact, no remote feed, one bleed source/proxy, unavailable hand,
-0.1 leg speed multiplier and denied Space action, followed by full reset.
-
-Actual renders are in `Verification/charcrafter-player.png`,
-`charcrafter-player-feed.png`, `charcrafter-player-crouch.png`,
-`charcrafter-player-jump.png`, `charcrafter-player-cut-*.png`, plus the refreshed
-Dummy/light/recording images. Main-camera captures omit the IMGUI overlay; they
-are not proof of F1 layout. No fresh full door/obstacle/platform navigation suite
-or head-specific strike test was run. The saved scene, Dummy prefab, vendor files
-and package configuration were unchanged. Existing Editor SearchDatabase and
-shadow-atlas diagnostics remain separate from the passing gameplay checks.
 
 Files changed in this follow-up: `Prefabs/Player.prefab`,
 `Scripts/PlayerController.cs`, `Scripts/CharCrafterVisual.cs`,
@@ -292,48 +320,9 @@ be picked up with only one arm. Pickup disables the simple drop physics before
 reattaching an item. Cameras retain ID and actual history, stop handheld feed,
 and continue placed recording. An intact dropped lamp keeps both kinds of light.
 
-One or two missing legs apply exactly one 0.1 base movement multiplier through
-the existing player/enemy motor, without modifying moveSpeed. Existing crouch
-and attack factors still apply. The injured capsule uses zero friction so the
-floor does not cancel this slow motor; the existing motor still handles braking.
-Jump and kick are rejected; airborne injury does
-not teleport, disable gravity or prevent normal landing. The main standing
-capsule/torso pose remains a blockout approximation: no crawl animation or altered
-body support shape. ResetHealth changes health only; scene restart restores limbs.
-
 Recorders observe the original damage event and capture light/visibility before
 forced item drops. Each device counts only witnessed sever events in its own
 existing report (`Severings recorded`), without an extra hit/event or score system.
-
-`RRM.Editor.CombatPrototypePlayCheck.RunSeveringAndExit` runs actual native hand
-input/shared enemy melee commands, then axe/duel/feet/block/grapple/hands/item-bash
-regressions. It does not regenerate the scene. Tests temporarily raise health,
-stage combat positions, add witnesses and a second held axe, and discard these
-fixtures on R. `RRM > Add Limb Hurtboxes` only updates the two actor prefabs using
-Unity prefab APIs; the ordinary builder also configures legs for newly made actors.
-The aerial fixture faces the player away from the enemy (Space must choose jump,
-not kick) and shortens that enemy's windup to 0.05 s to arrange contact in flight.
-The autonomous enemy does not yet choose chopping gestures; its sever tests call
-the same public hand-attack command with a directed intent, never ApplyDamage.
-
-Graphics-enabled Play Mode verification on 2026-09-14:
-- `Logs/sever-play-4.log` passed all severing and axe scenarios. Both actors lost
-  each arm and both legs through real contacts, with one damage/event per swing;
-  ordinary attacks, a solid wall, missing arms and corpses never gained invalid
-  cuts. Item identity/history, either-hand loss, two-hand drop, grapple release,
-  slow actual movement, no jump/kick, airborne loss/landing and R cleanup passed.
-  This run then stopped at an old duel test aiming at the chest while the kick
-  now contacted a leg below that camera view. Only that test's aim was corrected
-  to the actual eligible kick zone; camera visibility was not broadened.
-- `Logs/sever-regressions.log` then passed the complete duel, feet, wall/block,
-  grapple, contextual-hands, lamp and CameraBash regressions (exit 0). No gameplay
-  code changed between these two runs. No C# compile errors or gameplay exceptions
-  remain in the final regression run; startup package-service timeouts and existing
-  URP shadow-atlas warnings are separate environment/rendering limitations.
-- Frames: `Verification/sever-dummy.png`, `sever-player.png`, `sever-airborne.png`.
-  These are rendered game-camera images, not a manual desktop playtest. Native
-  queued inputs/shared actor commands perform the attacks; scene placement,
-  health and the aerial timing are explicitly controlled test fixtures.
 
 CombatPrototype scene content is unchanged from this sprint's baseline. Only
 Player/Dummy prefabs gained the two existing-leg Hurtboxes; native Unity saving
@@ -460,8 +449,8 @@ checks can set probabilities to 0/1 to reproduce either outcome.
 
 Death or disabling the holder's controller cancels attacks, releases the pair and
 detaches held items. Whole-scene teardown does not try to reparent dying objects.
-Camera ID and recording remain on that same device; it records privately until
-picked up. A lamp remains visible and lit on nearby support, or at its last world
+Camera ID and recording remain on that same device; its placed feed stays live.
+A lamp remains visible and lit on nearby support, or at its last world
 pose when no supported position is reachable (no falling-item physics). Ordinary
 Q/E pickup works for a surviving player after the enemy dies. The existing report
 is explicitly a PREVIEW: ownership is read live, never frozen at the fatal event.
@@ -505,50 +494,12 @@ uses a temporary blocker there. That sprint had only fists/camera/lamps; the new
 axe occupies both hands, so camera-plus-weapon is still not a supported combination.
 No AI kicks, automatic wall slam, new items or desktop build are part of this sprint.
 
-## Contextual Space and feet
+## Feet
 
-Short Space (release before 0.2 s): kick a living reachable Hurtbox in front of the
-BODY; without such a target, jump. Selection happens on release, not press.
-Hold Space: crouch with no release kick/jump. Left Ctrl also crouches; either held
-crouch key keeps the stance lowered. Releasing both restores height only with
-clear headroom. The same existing capsule, ground probe, gravity, movement and
-camera-height handling remain in use.
-
-Both actions require ground support and an uninterrupted, focused short gesture.
-Busy attack/block recovery rejects the gesture, without a fallback jump or queued
-attack. A kick works with either/both hands occupied, without swinging or breaking
-their items. No kick in grapple, aerial kick, finishing move or new enemy decision.
-
-MeleeAttack has Inspector parameters: `kickDamage` 24, `kickReach` 0.9 m from the
-foot to a Hurtbox, `kickHalfAngle` 35 degrees, `kickHeightTolerance` 0.45 m above or
-below the foot, and `kickRadius` 0.14 m. Grounded actor at a platform edge can kick
-a reachable lower target; the platform itself never counts as a kick target.
-Wall/low-obstacle checks sweep from the foot, not the chest or handheld camera.
-Target selection ignores cooldown; rejecting an attack cannot reinterpret it as jump.
-The public `FindKickTarget` / `TryKick` path uses existing melee phases, physical
-contacts, shared recovery, damage, blocking, blood and camera observation. A target
-can evade during windup: the foot follows a committed body-relative path, never
-homes onto the target. The existing primitive right leg supplies the visible pose;
-no new assets, rig, scene components or hand-item system are added.
-
-`RRM.Editor.CombatPrototypePlayCheck.RunFeetAndExit` checks real Space/mouse input,
-movement, low-cover landing, camera height/privacy and common attack commands,
-then wall/block, grapple, hands, lamps and CameraBash regressions. No builder is used.
-Verified 2026-09-13 in graphics-enabled Unity Play Mode: `Logs/feet-final.log`,
-exit 0, no C# compile errors or gameplay exceptions. Queued keyboard/mouse actions
-checked occupied-hand kicks with a rear-facing camera, actual single-hit contact,
-evaded kicks, shared hand/foot recovery and no fallback/queued jump. Targets behind
-the body, too high, behind a wall or behind low cover did not steal jump input.
-Standing/moving/raised jumps, no double jump, landing on saved 45 cm cover, a real
-kick to an accessible target below its edge, crouch speed and actual capsule height,
-both orders of Ctrl/Space release, ceiling clearance, and a short crouched jump
-with Ctrl still held passed. Handheld lens movement/live pixels and placed-camera
-position/privacy were checked; grapple forbids both Space and the kick command.
-Restart and subsequent wall/block, grapple/escape, hands, lamp and CameraBash checks
-all passed. Screenshots: `Verification/kick-contact.png`, `feet-cover-landing.png`,
-`feet-jump-feed.png`. Scene/prefab hashes and ProjectSettings remained unchanged.
-Leg movement is a primitive pose, not an authored animation. No aerial/grapple
-kicks, new enemy decisions, desktop build or manual long playtest were added.
+K attempts the existing grounded kick against a reachable target in front of the
+body. It uses FindKickTarget/TryKick, real melee contact and the shared recovery.
+No target means no action. Occupied hands are allowed; prone, grapple and missing
+legs prohibit kicking. Space does not attack. Kick tuning remains on MeleeAttack.
 
 ## Grapple prototype
 
@@ -558,13 +509,12 @@ grips; the other remains free. Releasing the gripping button releases the target
 An unsuccessful hold does not keep searching or queue a grab: release and retry.
 There is no automatic unequipping, target teleport or camera requirement.
 
-Both actors remain at the actual contact positions, with horizontal position and
-rotation constrained. Gravity/colliders remain active; there is no dragging or
-joint simulation. Movement, jumping, crouch changes and item interaction are
-blocked while paired. Death, disable, focus loss, separated/obstructed actors,
-or an external hit on the captor release both. Original living-body constraints
-are restored; death feedback keeps its existing fall behavior. This first
-standing-height prototype rejects crouching and appreciable vertical motion.
+While gripping, WASD drives both existing Rigidbodies at grappleMovementScale
+(default 0.4) times the captor's stance/limb/attack speed. Both capsule sweeps limit
+the shared velocity; a blocked victim stops the captor too. Gravity remains active.
+Facing stays committed during the grapple. Excess separation, obstruction, death,
+disable, focus loss or interruption release both. No follow teleport or joints.
+Standing and crouching can initiate; prone cannot. Prone is forbidden while gripping.
 
 A short click of the FREE hand uses the existing fist damage, physical contact
 sweep, windup/strike/recovery and one-hit-per-target guard, restricted to the held
@@ -739,8 +689,8 @@ This is a diagnostic color map, not real illumination or a screen-wide filter.
 Each CameraDevice also owns its BloodEvents: mark position/reference, visible
 YES/NO at creation, surface light level and clarity (zero when not visible).
 They are separate from hit counts: one hit plus its mark is still one recorded
-hit. An active placed recorder collects the same observations privately, without
-restoring live feed or remote HUD. `CameraRecorder.InspectBlood(bloodEvent)` checks
+hit. An active placed recorder collects the same observations with live feed;
+its detailed held-only HUD stays hidden. `CameraRecorder.InspectBlood(bloodEvent)` checks
 whether that surviving mark is visible NOW, without changing historical evidence
 or adding another event. Later discovery is query-only for this prototype; there
 is no periodic scanning, automatic discovery log, save file or replay. Pickup keeps
@@ -771,73 +721,6 @@ Walls and covers have real colliders and use the existing visibility checks.
 Controls below apply here; R restarts the combined CombatPrototype.
 Dummy approaches a nearby unobstructed player, but cannot plan a route through
 the doorway or around cover. Both rooms, light preview and platform are unchanged.
-
-The low cover in front of the spawn is reachable with the existing W + Space jump
-(0.6 m); no jump tuning or climbing assist was added. Its width/depth and footprint
-are unchanged. `RRM.Editor.CombatPrototypePlayCheck.RunStarterCoverAndExit` saves
-the narrow height adjustment, reopens CombatPrototype and checks jumping onto it,
-stable landing, working handheld feed and walking back off with S.
-
-- W/S: toward the top/bottom edge of the main game view. A/D strafe toward
-  its left/right edge without turning the body. Diagonals are normalized.
-  Movement never uses body facing or the handheld's direction.
-- With both mouse buttons released, the body turns toward the cursor on a
-  horizontal plane at the player's feet. Either hand action locks body turning;
-  WASD remains screen-relative. The HUD/outside the game viewport is ignored.
-- Space (short tap, under 0.2 seconds): kick a reachable target in front on release;
-  otherwise jump, about 0.6 m, including
-  while moving. Both press and release must be grounded; leaving the surface or
-  losing focus cancels the pending tap. Attack/block recovery rejects the gesture,
-  never converts a rejected kick to jump. WASD keeps working in the air; no double
-  jump, aerial kick or queued air action.
-- Space (hold 0.2 seconds) or Left Ctrl (hold): crouch to 65% body/collider height
-  and move at 50% speed. A long Space hold never jumps or kicks, including on release.
-  Release both crouch keys to stand and regain speed; under a low ceiling, stay
-  crouched until clear. Ctrl still crouches immediately.
-- LMB is the left hand; RMB is the right hand. Except for the two-handed axe
-  context described above, release before `handHoldThreshold`
-  (default 0.22 seconds on PlayerController) for one click. Reaching the threshold
-  starts hold; releasing hold ends it without a click. Mouse motion never bypasses
-  this threshold. Hold the camera hand's button, then move the mouse to aim.
-  It starts in the LEFT hand. Full yaw
-  permits looking backward while walking forward. Release keeps its BODY-relative
-  yaw/pitch: turn from north to east, and a rear-facing camera turns from south
-  to west. Position still follows the hand. A placed camera stays fixed in the world.
-- Short-release an empty hand for a punch. With both hands empty, hold ONE button
-  for a grapple on a nearby target in front; hold BOTH for a short frontal block.
-  In an existing grapple, fresh free-hand hold attempts one contact-only wall slam.
-  These holds never punch on release or auto-repeat.
-  MeleeAttack exposes fistDamage (18) and
-  fistReach (0.42 m from the hand pivot). The initial baton is removed, including its
-  long contact tip. Enemy settings remain unchanged. Holding does not repeat attacks.
-- Q: place the LEFT hand's item, or pick a nearby available item if empty. E: RIGHT.
-  The nearest accessible camera/lamp/axe is tried first, within its pickup distance,
-  not through walls. The axe needs BOTH hands empty and occupies both with one object;
-  either Q or E puts it down. Its mouse gesture context replaces separate hand actions.
-  An occupied hand never automatically transfers/replaces its item. Q wins simultaneous
-  Q/E. Active swings and grapples block item interaction. The camera starts LEFT; RIGHT starts empty.
-- Lamps visibly follow their hand and remain lit when placed. Placement probes nearby
-  floor/flat cover tops, checks clearance and support; an invalid placement keeps the
-  lamp held. Limb-loss drops use simple physics; no throwing, inventory, batteries
-  or lamp hold action.
-- Short-click the camera/lamp hand (before the hand hold threshold) to swing on release.
-  Lamp base damage is 54; camera base damage is 68, versus fist 18. Tune lamp
-  `hitDamage` and camera `hitDamage` separately. The existing body-part multipliers
-  still apply. First confirmed character hit consumes the item; a miss keeps it.
-  Carrying into characters or touching walls never consumes an item.
-  Damageable notifies all recorders/evidence observers before the used lamp loses
-  its light or the used camera breaks. The hand becomes Empty, but the same recovery
-  must finish before a new fist attack. Holding does not attack or repeat; presses
-  during recovery do not queue another attack, even if released after recovery.
-  Both hands share one cadence: windup 0.32 + strike 0.18 + recovery 0.5 seconds,
-  all tunable on MeleeAttack. Contact pause is separate impact feedback; there is
-  no additional one-second cooldown. Aiming the opposite camera hand remains possible.
-  Attacks follow the body/attacking hand, not the camera's viewing direction.
-- Focus loss, item changes and successful placement cancel that hand's unfinished
-  click/hold. Release the button and press afresh; old input never acts on a new item.
-- Arrow-key movement and the old F interaction are removed. R/F1 remain.
-- F1: show/hide the controls guide, both handheld and after placement.
-- R: restart the room, health and tape counters.
 
 The F1 guide temporarily replaces the HUD without pausing the room. It contains
 only static controls, never remote camera information, and scrolls in small views.
@@ -878,15 +761,6 @@ creating a new device. There are no global/shared recording counters. The report
 window can list multiple devices, but CombatPrototype still contains only one.
 F1 temporarily replaces the report with the controls guide, without resetting it.
 
-The right side of the room has a 0.9 m Camera Platform with a shallow approach
-from the south (bottom of the top-down view). Walk up and back down with WASD;
-no jump or interaction button is needed. The platform and ramp are two static
-boxes using Wall.mat. The existing Rigidbody motor and gravity handle the slope;
-there is no climbing controller, snapping or teleport. The handheld stays in
-the player's hand, so its lens and live feed rise with the player. Hold the camera hand's mouse button to
-adjust the viewing direction while changing height; releasing keeps it. The floor cone remains
-only a flat direction preview, not a projection onto the raised surface.
-
 PlayerController now exposes LeftHand and RightHand. Each has Unavailable/Empty/HoldingItem
 state, an IHandItem reference, and separate WasClickedThisFrame / IsHoldActive
 actions (LMB for left, RMB for right). All hands use `WasTappedThisFrame`
@@ -914,17 +788,6 @@ platform, actors and fixed lights. Three instances use one PortableLamp.prefab:
 (-3.3, 0.02, -3.5), (-6.8, 0.02, 2), (3.2, 0.02, -2.1). Repeat setup preserves
 existing instance positions. R reloads the saved scene; no runtime spawner is used.
 
-Jump and crouch use PlayerController's existing Rigidbody motor, not a second
-movement component. A short sphere probe under the capsule checks supporting
-Default-layer room geometry (`groundMask`); wall normals cannot authorize a jump.
-The upward launch changes only vertical velocity, leaving the same horizontal
-motor active. `jumpHeight`, `crouchHeightScale` and `crouchSpeedScale` are tunable.
-Crouch resizes the capsule about its feet and compresses Body Visual, including
-its hurtboxes, with no animation. The actual camera housing/lens and held lamp
-move down with their hands without scaling the items or changing camera aim.
-Camera pickup tests reach from that lowered mount; standing up does not move a
-placed camera. This is a blockout pose, not a skeleton, parkour or stealth system.
-
 CameraDevice is a component on the existing VHS housing, alongside CameraRecorder.
 It owns the runtime GUID (`Id`), current `Owner` (PlayerController reference), and
 `State`: Held when owned, Placed when free, Broken after a confirmed bash hit.
@@ -937,22 +800,14 @@ geometry. Pickup preserves the placed world angle and recorded events.
 IDs last for the device's runtime lifetime, not across scene reloads or saves.
 Broken retains only diagnostic data/reporting, with no reusable world item or repair.
 
-CameraRecorder reads CameraDevice's state; there is no second placement flag.
-HELD keeps the camera attached to Player with live video. PLACED keeps the same
-housing and lens fixed in the world, but disables the rendering Camera, releases
-the RenderTexture and hides both the feed and its diagnostic overlay. There is
-no remote REC EVENT, counter or target-health readout after placement.
-IsRecording reports an enabled recorder with a valid lens, independently of
-rendering. Placed recording still receives DamageEvents and uses the same FOV
-and obstruction checks; existing counters update privately, without a new score
-system. No video, files or playback are produced; events live only in device memory.
-Player can walk and turn independently; the placed camera no longer consumes hand
-input. Camera placement keeps the exact hand height without
-dropping or snapping to a surface. Q/E from outside pickup reach does nothing;
-re-enabling a placed recorder does not restore live video. There is no inventory,
-multi-camera selection or equipment system. R removes the device and creates
-one new held device and feed with a new ID. TryPlace/TryPickup reject another
-holder's occupied device; no automatic stealing or transfer behavior is added.
+CameraRecorder reads CameraDevice's state. HELD and PLACED active cameras both
+render live video through the same Camera and RenderTexture. Placement keeps the
+world pose and clears owner/hand references, not ID or evidence. The feed remains
+in its existing corner while the player walks away. The detailed held-camera HUD
+still hides on placement. A camera held by the autonomous opponent does not provide
+a feed; a broken camera neither renders nor records. Re-enabling a placed recorder
+restores live video. Q/E pickup preserves the device and all contact snapshots.
+There is one authored camera, no video files, playback or multi-camera selector.
 
 Dummy's existing PlayerController has five simple states: Idle, Approach,
 Windup, Attack, Recovery. Its assigned `opponent` is Player's Damageable.
@@ -1099,65 +954,6 @@ For the older combined input/physics/render check:
 Unity -batchmode -projectPath /path/to/RRM -executeMethod RRM.Editor.CombatPrototypePlayCheck.RunCombinedAndExit -logFile /path/to/play-check.log
 ```
 
-Do not add `-quit`: the combined check closes its dedicated editor when finished.
-The command uses no Editor windows, but keeps graphics enabled (do not add
-`-nographics`). This still checks real camera pixels,
-input, damage and recording. Game View layout and the F1 screenshot require a
-separate graphical run; batch mode skips the window-layout check and preserves
-`Verification/hands-controls-f1.png` from that graphical run.
-The enemy sprint's full batch Play Mode check passed, including both actual enemy
-hits, the fatal fall, private camera evidence and R restart. The graphical combined
-run exceeded its 240-second limit during earlier movement checks on this Linux
-Editor. The death-message state is checked, but its on-screen layout has not yet
-been visually verified. Use normal manual Play Mode for that final UI inspection.
-That historical combined check starts with independent controls: actual LMB drag
-and the hand model (left-camera/right-weapon, distinct click/hold signals,
-Q/E switching via placement, visible weapon transfer both ways, RMB aiming after
-right-hand pickup, actual left-hand melee/blood/recording, rejected-pickup rollback,
-no attack with the camera hand, disabled input, no arrows/F,
-simultaneous Q/E, and F1). It checks looking backward, body-forward W at
-90-degree character rotation, camera-button release,
-S/A/D/diagonal movement without auto-turn, free mouse turning while idle,
-north-to-east body turning with the camera still behind the body, pitch limits,
-place/pickup and restart. The camera's local angle and hand position are
-checked through body turns. For only these checks use
-`RRM.Editor.CombatPrototypePlayCheck.RunControlsAndExit`. Captures include
-`Verification/controls-backward-walk-ui.png` and the `controls-*-feed.png` images.
-Close-up native scene renders of both item arrangements: `hands-camera-left.png`
-and `hands-camera-right.png`. These are real runtime meshes, not UI hand labels.
-It now also runs the existing height scenario in the current two-room scene:
-W ascent onto the 0.9 m platform, a stationary pause, and S descent. It checks
-matching lens movement, unchanged aim and real feed pixels. Lowering only the
-lens at the same horizontal position hides the torso behind the block again,
-isolating height from forward movement. Captures: `Verification/height-ground-feed.png`,
-`height-platform-feed.png`, `height-return-feed.png`, and ground/platform `-ui.png`.
-The focused locomotion check exercises standing/moving/elevated Space taps, a
-rejected air tap, stationary/moving Space-hold crouch, Ctrl crouch, no jump on long
-release, 50% speed and recovery, ceiling clearance, independent mouse aim in flight,
-crouched camera place/pickup, reset and pending-tap cancellation on focus loss.
-Captures: `movement-standing.png`, `movement-jump.png`,
-`movement-crouch.png`, `movement-crouch-right-camera.png` and `movement-*-feed.png`.
-Use `RRM.Editor.CombatPrototypePlayCheck.RunLocomotionAndExit` to run this current
-movement/camera scenario plus the existing edit-mode checks, without rebuilding
-the scene. It no longer assumes a baton in the other hand. The broader combined
-hand check remains historical as noted at the top of this README. The focused
-run ends with a real W + short Space jump onto the saved 45 cm starter cover,
-stable landing, live feed and S descent, without running the scene builder.
-On 2026-09-13 the movement/camera portion passed in graphics-enabled Play Mode
-(`Logs/space-controls.log`): real keyboard/mouse input, tap/hold separation,
-jumps, crouch, speed recovery, headroom, camera aim/feed, Q/E pickup, F1, R and
-focus cancellation. No combat changes were made or newly playtested in this step.
-The subsequent cover run stalled during Editor startup. Its retry eventually
-entered Play Mode but ended in a native Unity crash after a stop request, before
-reaching the cover check (`Logs/space-controls-cover*.log`). The new-input cover
-check is still unverified. The saved scene, prefabs and ProjectSettings remained
-unchanged; no test Editor was left running.
-For just that scenario, use `RRM.Editor.CombatPrototypePlayCheck.RunHeightAndExit`
-as the execute method. It opens the same CombatPrototype scene without rebuilding it.
-The older individual scenarios documented below were written for the original
-one-room geometry and cursor/world-space controls; use the combined check above
-for the current prototype.
-
 The legacy full sequence checks movement, a real mouse attack against
 the moving Dummy, an immediate DamageEvent/blood check, death, R-restart,
 a 40-second random walk starting near a room corner, wall collisions and
@@ -1288,13 +1084,6 @@ own Editor process, see [Unity CLI builds](https://docs.unity3d.com/6000.6/Docum
 - Reproducibility means the same saved inputs/configuration, not byte-identical
   output: Unity build identifiers/timestamps vary. CLI provenance records the
   Editor, packages and Git state, including uncommitted changes.
-
-The 2026-09-12 graphics-enabled Play Mode checks passed with the revised controls:
-`Logs/controls-relative-camera.log` covers cursor-driven turning, body-relative
-strafe/backpedal, rear camera following body rotation, real feed pixels, both
-hands, pitch limits, placement/pickup and restart. `Logs/locomotion-relative-camera.log`
-covers standing/moving/elevated jumps, no double jump, crouch, headroom, reduced
-speed and recovery, camera height and lowered pickup.
 
 Pre-lamp Player verification on 2026-09-12 (the existing Windows/Linux bundles below
 do not contain the lamp sprint):

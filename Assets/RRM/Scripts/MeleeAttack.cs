@@ -53,6 +53,7 @@ namespace RRM
         private float pauseRemaining;
         private Vector3 previousTip;
         private float activeDamage, activeRadius, activeImpulse;
+        private float handStrikeHeight;
         private PortableLamp activeLamp;
         private CameraDevice activeCamera;
         private TwoHandedAxe activeAxe;
@@ -139,8 +140,13 @@ namespace RRM
                 activeKind = DamageKind.CameraBash;
                 activeWeight = activeCamera.bashWeight;
             }
+            handStrikeHeight = (chopIntent == ChopIntent.Leg ? 0.4f : 1.08f) * handController.HeightScale;
+            if (controller.autonomousMovement && controller.opponent
+                && controller.opponent.GetComponent<PlayerController>()?.IsProne == true)
+                handStrikeHeight = Mathf.Min(handStrikeHeight, Mathf.Max(0.1f,
+                    controller.opponent.GetComponent<Collider>().bounds.center.y - transform.position.y));
             weaponPivot.localPosition = new Vector3(activeAxe ? 0f : hand.Side == HandSide.Left ? -0.38f : 0.38f,
-                (chopIntent == ChopIntent.Leg ? 0.4f : 1.08f) * handController.HeightScale, 0.08f);
+                handStrikeHeight, 0.08f);
             weaponTip.localPosition = Vector3.forward * HandReach(hand);
             activeDamage = Mathf.Max(1f, activeAxe ? activeAxe.hitDamage : activeCamera ? activeCamera.hitDamage : activeLamp ? activeLamp.hitDamage : fistDamage);
             activeRadius = itemStrike ? 0.2f : 0.14f;
@@ -168,7 +174,7 @@ namespace RRM
             return true;
         }
 
-        // Target eligibility deliberately ignores cooldown so context never falls back to a jump during recovery.
+        // Target eligibility is independent of attack recovery; StartAttack owns the shared cadence.
         public Hurtbox FindKickTarget()
         {
             Hurtbox nearest = null;
@@ -209,7 +215,7 @@ namespace RRM
         public bool TryKick(Hurtbox target)
         {
             var controller = GetComponent<PlayerController>();
-            if (!controller || !controller.CanAct || !controller.HasBothLegs || controller.InGrapple || !controller.IsGrounded
+            if (!controller || !controller.CanAct || !controller.HasBothLegs || controller.IsProne || controller.InGrapple || !controller.IsGrounded
                 || !CanKickTarget(target, out Vector3 point) || !StartAttack(false)) return false;
             kicking = true;
             handController = controller;
@@ -267,7 +273,7 @@ namespace RRM
             if (handController && !kicking)
             {
                 Vector3 position = weaponPivot.localPosition;
-                position.y = (chopIntent == ChopIntent.Leg ? 0.4f : 1.08f) * handController.HeightScale;
+                position.y = handStrikeHeight;
                 weaponPivot.localPosition = position;
             }
             if (activeLamp)
@@ -312,7 +318,8 @@ namespace RRM
                     || hitTargets.Contains(zone.owner)) continue;
                 if (grappleStrikeTarget && zone.owner != grappleStrikeTarget) continue;
                 Vector3 point = collider.ClosestPoint(end);
-                Vector3 origin = kicking ? KickOrigin : activeAxe ? weaponPivot.position : transform.position + Vector3.up * 1.15f;
+                Vector3 origin = kicking ? KickOrigin : activeAxe ? weaponPivot.position
+                    : new Vector3(transform.position.x, weaponPivot.position.y, transform.position.z);
                 if (kicking ? !ClearKickPath(point)
                     : activeAxe ? Physics.CheckSphere(origin, activeRadius, obstructionMask, QueryTriggerInteraction.Ignore)
                         || Physics.SphereCast(origin, activeRadius, (point - origin).normalized, out _,

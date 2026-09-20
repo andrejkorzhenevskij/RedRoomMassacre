@@ -85,12 +85,12 @@ namespace RRM.Editor
         private static void TickLamps(float age)
         {
             int mode = SessionState.GetInt("RRM.PlayCheck.Lamps", 0);
-            if (mode >= 6 && mode <= 14)
+            if (mode >= 6 && mode <= 15)
             {
                 if (handCheck == null)
                 {
                     if (age < 0.8f) return;
-                    handCheck = mode == 14 ? CheckCharCrafter() : mode == 13 ? CheckBleeding() : mode == 12 ? CheckSevering() : mode == 11 ? CheckAxe() : mode == 10 ? CheckDuel() : mode == 9 ? CheckFeet() : mode == 8 ? CheckWallBlock() : mode == 7 ? CheckGrapple() : CheckContextualHands();
+                    handCheck = mode == 15 ? CheckStanceAndDragging() : mode == 14 ? CheckCharCrafter() : mode == 13 ? CheckBleeding() : mode == 12 ? CheckSevering() : mode == 11 ? CheckAxe() : mode == 10 ? CheckDuel() : mode == 9 ? CheckFeet() : mode == 8 ? CheckWallBlock() : mode == 7 ? CheckGrapple() : CheckContextualHands();
                     step = 700;
                 }
                 if (age < handWait) return;
@@ -98,10 +98,10 @@ namespace RRM.Editor
                 else
                 {
                     handCheck.Dispose(); handCheck = null;
-                    if (mode == 14)
+                    if (mode >= 14)
                     {
                         SessionState.SetInt("RRM.PlayCheck.Lamps", 0);
-                        Finish(true, "RRM CHARCRAFTER PLAY CHECK PASSED (detached proxy only; live skin is not segmented)");
+                        Finish(true, mode == 15 ? "RRM STANCE DRAGGING PLAY CHECK PASSED" : "RRM CHARCRAFTER PLAY CHECK PASSED (detached proxy only; live skin is not segmented)");
                         return;
                     }
                     SessionState.SetInt("RRM.PlayCheck.Lamps", mode > 6 ? mode - 1 : 4);
@@ -235,7 +235,7 @@ namespace RRM.Editor
                 Debug.Log($"RRM LAMP LIGHT: fixed point={LightProbe}, before={lightBefore:F2}, carried near={lightNear:F2}, placed event={savedQuality:F2}, removed/new event={after:F2}");
                 Require(testLamp.TryPlace(controller), "Place after returning to left room");
                 Require(controller.HeldCamera.TryPlace(controller), "Camera places normally");
-                Require(!recorder.LiveTexture && !recorder.liveCamera.enabled && recorder.IsRecording, "Placed camera records privately, no remote feed");
+                Require(recorder.LiveTexture && recorder.liveCamera.enabled && recorder.IsRecording, "Placed camera records with live placed feed");
                 Require(testLamp.TryPickup(controller, HandSide.Left), "Same lamp fits free left hand");
                 Require(testLamp.transform.localPosition.x < 0, "Lamp visibly mounted left");
                 Require(!recorder.GetComponent<CameraDevice>().TryPickup(controller, HandSide.Left), "Camera cannot replace lamp in occupied hand");
@@ -377,7 +377,7 @@ namespace RRM.Editor
                     && Object.FindObjectsByType<PortableLamp>().Length == 2, "No invisible source or reusable broken lamp");
                 Require(GameObject.Find("Portable Lamp 2") == otherLamp
                     && Object.FindObjectsByType<PortableLamp>().All(lamp => lamp.lightSource.pointLight.enabled), "Other lamps unaffected");
-                Require(!recorder.LiveTexture && recorder.IsRecording && !attack.IsBusy, "Placed camera stays private; recovery completes");
+                Require(recorder.LiveTexture && recorder.IsRecording && !attack.IsBusy, "Placed camera stays live; recovery completes");
                 Debug.Log($"RRM LAMP HIT: damage={lampHitDamage:F2}; recorded light={lampHitLight:F2}; lamp contribution={lampHitContribution:F2}; after break={LightSource.At(lampHitPoint):F2}");
                 InputSystem.QueueStateEvent(mouse, new MouseState());
                 Next();
@@ -491,8 +491,8 @@ namespace RRM.Editor
             yield return 0.04f;
             InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
             yield return 0.05f;
-            Require(controller.LeftHand.State == HandState.Empty && device.State == CameraDeviceState.Placed && !recorder.LiveTexture,
-                "Q places left camera without duplicating it or providing remote feed");
+            Require(controller.LeftHand.State == HandState.Empty && device.State == CameraDeviceState.Placed && recorder.LiveTexture,
+                "Q places left camera without duplicating it and keeps live placed feed");
             InputSystem.QueueStateEvent(mouse, new MouseState());
             InputSystem.QueueStateEvent(keyboard, new KeyboardState());
             yield return 0.06f;
@@ -729,7 +729,7 @@ namespace RRM.Editor
             }
             else if (step == 610 && age > 0.25f)
             {
-                Require(bashDevice.State == CameraDeviceState.Placed && !recorder.LiveTexture && recorder.IsRecording,
+                Require(bashDevice.State == CameraDeviceState.Placed && recorder.LiveTexture && recorder.IsRecording,
                     "Q places the same device, preserving private recording");
                 InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.E));
                 Next();
@@ -777,7 +777,7 @@ namespace RRM.Editor
                 Require(blindBashWitness.GetComponent<CameraDevice>().RecordedCameraBashes == 0
                     && blindBashWitness.GetComponent<CameraDevice>().ReportWeight == 0,
                     "A camera facing away receives no CameraBash bonus");
-                Require(!bashWitness.LiveTexture && bashWitness.IsRecording, "Witness stays passive without remote feed");
+                Require(bashWitness.LiveTexture && bashWitness.IsRecording, "Witness stays passive with live placed feed");
                 brokenHistoryCount = bashDevice.RecordedHits;
                 brokenBloodCount = bashDevice.BloodEvents.Count;
                 witnessWeight = witness.ReportWeight;
@@ -841,7 +841,7 @@ namespace RRM.Editor
             var witness = clone.GetComponent<CameraRecorder>();
             witness.SetViewRotation(Quaternion.LookRotation(dummyBody.position + Vector3.up - witness.lens.position));
             if (blind) clone.transform.Rotate(0f, 180f, 0f, Space.World);
-            Require(witness.IsPlaced && witness.IsRecording && !witness.LiveTexture && witness.RecordedHits == 0,
+            Require(witness.IsPlaced && witness.IsRecording && witness.LiveTexture && witness.RecordedHits == 0,
                 "Temporary full camera clone starts as a fresh independent placed witness");
             return witness;
         }

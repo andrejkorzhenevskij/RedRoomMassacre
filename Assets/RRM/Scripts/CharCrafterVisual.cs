@@ -34,6 +34,8 @@ namespace RRM
             if (!item || !bone || !hand.IsAvailable || item is TwoHandedAxe || (attack && attack.IsBusy)) return;
             // Keep the device parent/rotation relative to its gameplay owner, including independently aimed cameras.
             Vector3 offset = item is CameraDevice ? cameraOffset : lampOffset;
+            // The lamp's standing grip offset is taller than the prone body.
+            if (controller.IsProne && item is PortableLamp) offset.y *= controller.HeightScale;
             item.transform.position = bone.position + transform.TransformDirection(offset);
         }
 

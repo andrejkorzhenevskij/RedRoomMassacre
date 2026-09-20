@@ -109,6 +109,7 @@ namespace RRM.Editor
                 var cameraObject = new GameObject("Check Recorder");
                 cameraObject.transform.position = origin + Vector3.up * 1.15f;
                 var recorder = cameraObject.AddComponent<CameraRecorder>();
+                Check(cameraObject.GetComponent<CameraDevice>(), "Recorder has its required device");
                 recorder.lens = cameraObject.transform;
                 recorder.showOverlay = false;
                 Vector3 visible = origin + new Vector3(0, 1.15f, 2);
@@ -307,18 +308,9 @@ namespace RRM.Editor
             RunAndExit();
         }
 
-        public static void RunLocomotionAndExit()
-        {
-            SessionState.SetBool("RRM.PlayCheck.LocomotionOnly", true);
-            RunAndExit();
-        }
+        public static void RunLocomotionAndExit() => RunStanceAndExit();
 
-        public static void RunStarterCoverAndExit()
-        {
-            CombatPrototypeBuilder.SetStarterCoverHeight();
-            SessionState.SetBool("RRM.PlayCheck.StarterCover", true);
-            RunAndExit();
-        }
+        public static void RunStarterCoverAndExit() => RunStanceAndExit();
 
         public static void RunEnemyAndExit()
         {
@@ -349,7 +341,7 @@ namespace RRM.Editor
         private static bool leftHandHolding, rightHandHolding;
         private static int movementCase;
         private static Vector3 expectedMovement;
-        private static float standingCapsuleHeight, jumpVelocity;
+        private static float standingCapsuleHeight;
         private static bool spaceTapReleased;
         private static GameObject stanceCeiling;
         private static readonly (Vector2 input, Key[] keys)[] BodyMoves =
@@ -460,12 +452,8 @@ namespace RRM.Editor
                 controlsOnly = SessionState.GetBool("RRM.PlayCheck.ControlsOnly", false);
                 SessionState.SetBool("RRM.PlayCheck.ControlsOnly", false);
                 if (controlsOnly || combined) step = 120;
-                if (SessionState.GetBool("RRM.PlayCheck.LocomotionOnly", false)) step = 200;
-                SessionState.SetBool("RRM.PlayCheck.LocomotionOnly", false);
                 if (SessionState.GetBool("RRM.PlayCheck.EnemyOnly", false)) step = 300;
                 SessionState.SetBool("RRM.PlayCheck.EnemyOnly", false);
-                if (SessionState.GetBool("RRM.PlayCheck.StarterCover", false)) step = 500;
-                SessionState.SetBool("RRM.PlayCheck.StarterCover", false);
                 failed = false;
                 hitTime = -1f;
                 damageEvents = 0;
@@ -503,13 +491,12 @@ namespace RRM.Editor
                 if (!Application.isPlaying) return;
                 if (failed) throw new InvalidOperationException("Runtime logged an error; see the preceding entry.");
                 // Native captures can make simulated frames much slower than wall time in the Editor.
-                if (EditorApplication.timeSinceStartup - started > (combined ? 240 : step >= 200 ? 180 : 90))
+                if (EditorApplication.timeSinceStartup - started > (SessionState.GetInt("RRM.PlayCheck.Lamps", 0) >= 14 ? 420 : combined ? 240 : step >= 200 ? 180 : 90))
                     throw new TimeoutException($"Play check timed out at step {step}, simulated age {Time.time - since:F2}, "
                         + $"player {(player ? player.position.ToString() : "RELOADING")}, return point {beforePlayer}.");
                 float age = Time.time - since;
                 EditorApplication.QueuePlayerLoopUpdate();
                 if (SessionState.GetInt("RRM.PlayCheck.Lamps", 0) != 0) { TickLamps(age); return; }
-                if (step >= 500) { TickStarterCover(age); return; }
                 if (step == 10)
                     Require(dummyBody.position.z >= -6.55f, "Dummy never crosses the south wall during the impulse");
                 if (step == 4 && hitTime >= 0f && !bloodCaptured && Time.time - hitTime > 0.12f)
@@ -1003,7 +990,7 @@ namespace RRM.Editor
                     Debug.Log("RRM HEIGHT CHECK: S descent to floor, camera returns with player, live feed still active.");
                     if (combined)
                     {
-                        step = 200;
+                        SessionState.SetInt("RRM.PlayCheck.Lamps", 15); step = 700;
                         since = Time.time;
                         return;
                     }
@@ -1018,276 +1005,6 @@ namespace RRM.Editor
                     }
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
                     Next();
-                }
-                else if (step == 200 && age > 0.2f)
-                {
-                    StageRange(new Vector3(-6, 0.02f, -4), new Vector3(2.1f, 0.02f, 1.1f));
-                    player.rotation = Quaternion.Euler(0, 90, 0);
-                    player.transform.rotation = player.rotation;
-                    standingCapsuleHeight = player.GetComponent<CapsuleCollider>().height;
-                    mountLocalPosition = recorder.transform.localPosition;
-                    placedTexture = recorder.LiveTexture;
-                    Next();
-                }
-                else if (step == 201 && age > 0.4f)
-                {
-                    Require(player.GetComponent<PlayerController>().IsGrounded, "Standing on floor permits a jump");
-                    beforePlayer = player.position;
-                    beforeLens = recorder.lens.position;
-                    beforeLensRotation = recorder.lens.rotation;
-                    beforeLiveFrame = ReadLiveFrame("movement-standing-feed.png");
-                    Capture("movement-standing.png", 1280, 800);
-                    spaceTapReleased = false;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
-                    Next();
-                }
-                else if (step == 202 && age > 0.06f && !spaceTapReleased)
-                {
-                    Require(player.GetComponent<PlayerController>().IsGrounded,
-                        "Space press waits for tap/hold instead of jumping immediately");
-                    spaceTapReleased = true;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                }
-                else if (step == 202 && age > 0.22f)
-                {
-                    Require(!player.GetComponent<PlayerController>().IsGrounded && player.position.y > beforePlayer.y + 0.25f
-                        && player.linearVelocity.y > 0 && Vector3.ProjectOnPlane(player.position - beforePlayer, Vector3.up).magnitude < 0.03f,
-                        "Short Space release makes a modest standing jump without horizontal drift");
-                    Require(Vector3.Distance(recorder.lens.position - beforeLens, player.transform.position - beforePlayer) < 0.04f
-                        && Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) < 0.1f
-                        && ChangedPixels(beforeLiveFrame, ReadLiveFrame("movement-jump-feed.png")) > 1000,
-                        "Jump raises the actual lens and changes live pixels without steering it");
-                    Capture("movement-jump.png", 1280, 800);
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                    Next();
-                }
-                else if (step == 203 && age > 0.06f)
-                {
-                    jumpVelocity = player.linearVelocity.y;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
-                    Next();
-                }
-                else if (step == 204 && age > 0.06f)
-                {
-                    Require(player.linearVelocity.y < jumpVelocity - 0.2f && player.position.y < beforePlayer.y + 0.7f,
-                        "A second Space press in the air cannot add another jump");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                    Next();
-                }
-                else if (step == 205 && age > 0.85f)
-                {
-                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - beforePlayer.y) < 0.03f,
-                        "An air tap cannot queue a jump; landing returns to the same surface");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
-                    Next();
-                }
-                else if (step == 206 && age > 0.25f)
-                {
-                    CheckStance(true);
-                    Require(Vector3.Distance(player.position, beforePlayer) < 0.03f
-                        && ChangedPixels(beforeLiveFrame, ReadLiveFrame("movement-crouch-feed.png")) > 1000,
-                        "Stationary crouch keeps feet planted and lowers the live viewpoint");
-                    Capture("movement-crouch.png", 1280, 800);
-                    stanceCeiling = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    stanceCeiling.transform.position = player.position + Vector3.up * 1.4f;
-                    stanceCeiling.transform.localScale = new Vector3(1.2f, 0.2f, 1.2f);
-                    Physics.SyncTransforms();
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                    Next();
-                }
-                else if (step == 207 && age > 0.2f)
-                {
-                    CheckStance(true);
-                    Require(Vector3.Distance(player.position, beforePlayer) < 0.03f,
-                        "Long Space release neither jumps nor expands the capsule into a low ceiling");
-                    Object.DestroyImmediate(stanceCeiling);
-                    Physics.SyncTransforms();
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
-                    Next();
-                }
-                else if (step == 208 && age > 0.4f)
-                {
-                    CheckStance(true);
-                    beforePlayer = player.position;
-                    Next();
-                }
-                else if (step == 209 && age > 0.4f)
-                {
-                    float speed = Vector3.ProjectOnPlane(player.position - beforePlayer, Vector3.up).magnitude / age;
-                    Require(Mathf.Abs(speed - player.GetComponent<PlayerController>().moveSpeed * 0.5f) < 0.25f,
-                        $"Held Space + W moves at half speed: {speed:F2} m/s");
-                    Debug.Log($"RRM LOCOMOTION SPEED: crouched {speed:F2} m/s at {player.position}.");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
-                    Next();
-                }
-                else if (step == 210 && age > 0.35f)
-                {
-                    CheckStance(false);
-                    float speed = Vector3.ProjectOnPlane(player.linearVelocity, Vector3.up).magnitude;
-                    Require(speed > 2.9f && player.GetComponent<PlayerController>().IsGrounded,
-                        $"Releasing held Space restores normal speed without jumping: {speed:F2} m/s at {player.position}");
-                    Debug.Log($"RRM LOCOMOTION SPEED: standing {speed:F2} m/s at {player.position}.");
-                    StageRange(new Vector3(-7, 0.02f, -4), new Vector3(2.1f, 0.02f, 1.1f), false);
-                    player.rotation = Quaternion.Euler(0, 90, 0);
-                    player.transform.rotation = player.rotation;
-                    InputSystem.QueueStateEvent(mouse, new MouseState());
-                    Next();
-                }
-                else if (step == 211 && age > 0.2f)
-                {
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
-                    AimCamera(Vector2.zero);
-                    Next();
-                }
-                else if (step == 212 && age > 0.35f)
-                {
-                    beforePlayer = player.position;
-                    beforePlayerRotation = player.rotation;
-                    beforeLensRotation = recorder.lens.rotation;
-                    AimCamera(new Vector2(90f / recorder.mouseSensitivity, 0));
-                    spaceTapReleased = false;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
-                    Next();
-                }
-                else if (step == 213 && age > 0.06f && !spaceTapReleased)
-                {
-                    spaceTapReleased = true;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
-                }
-                else if (step == 213 && age > 0.25f)
-                {
-                    Require(player.position.x > beforePlayer.x + 0.4f && player.position.y > beforePlayer.y + 0.3f
-                        && player.linearVelocity.x > 2.9f && !player.GetComponent<PlayerController>().IsGrounded,
-                        "W + Space keeps forward momentum throughout the moving jump");
-                    Require(Quaternion.Angle(player.rotation, beforePlayerRotation) < 0.1f
-                        && Mathf.Abs(Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) - 90f) < 0.1f,
-                        "Hand input turns the camera independently during a moving jump");
-                    beforeLensRotation = recorder.lens.rotation;
-                    InputSystem.QueueStateEvent(mouse, new MouseState());
-                    Next();
-                }
-                else if (step == 214 && age > 1.1f)
-                {
-                    // Allow the motor to recover from the landing contact before measuring full speed.
-                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y) < 0.03f
-                        && player.linearVelocity.x > 2.9f && Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) < 0.1f,
-                        $"After landing: grounded={player.GetComponent<PlayerController>().IsGrounded}, "
-                        + $"position={player.position}, velocity={player.linearVelocity}, "
-                        + $"camera drift={Quaternion.Angle(recorder.lens.rotation, beforeLensRotation):F3}, age={age:F3}");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl));
-                    Next();
-                }
-                else if (step == 215 && age > 0.3f)
-                {
-                    CheckStance(true);
-                    placedDevice = recorder.GetComponent<CameraDevice>();
-                    deviceId = placedDevice.Id;
-                    beforeMount = recorder.transform.position;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl, Key.Q));
-                    Next();
-                }
-                else if (step == 216 && age > 0.2f)
-                {
-                    Require(recorder.IsPlaced && !recorder.LiveTexture && Vector3.Distance(recorder.transform.position, beforeMount) < 0.01f,
-                        "Q places the same camera at crouched hand height");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                    Next();
-                }
-                else if (step == 217 && age > 0.3f)
-                {
-                    Require(!player.GetComponent<PlayerController>().IsCrouching && !placedDevice.Owner
-                        && Vector3.Distance(recorder.transform.position, beforeMount) < 0.01f,
-                        "Standing up cannot move a placed camera");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl));
-                    Next();
-                }
-                else if (step == 218 && age > 0.2f)
-                {
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.LeftCtrl, Key.E));
-                    Next();
-                }
-                else if (step == 219 && age > 0.2f)
-                {
-                    CheckStance(true);
-                    Require(player.GetComponent<PlayerController>().RightHand.Item?.Source == placedDevice && placedDevice.Id == deviceId,
-                        "Crouched pickup uses the requested lowered hand and preserves camera ID");
-                    Capture("movement-crouch-right-camera.png", 1280, 800);
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.F1));
-                    Next();
-                }
-                else if (step == 220 && age > 0.3f)
-                {
-                    CheckStance(false);
-                    Require(recorder.ControlsVisible, "F1 still opens the guide with jump/crouch controls");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
-                    Next();
-                }
-                else if (step == 221 && age > 0.6f)
-                {
-                    player = GameObject.Find("Player").GetComponent<Rigidbody>();
-                    dummy = GameObject.Find("Dummy").GetComponent<Damageable>();
-                    dummyBody = dummy.GetComponent<Rigidbody>();
-                    recorder = Object.FindFirstObjectByType<CameraRecorder>();
-                    camera = Camera.main;
-                    Require(!player.GetComponent<PlayerController>().IsCrouching && !recorder.IsPlaced
-                        && Mathf.Abs(player.GetComponent<CapsuleCollider>().height - standingCapsuleHeight) < 0.001f,
-                        "Scene restart restores standing height and normal held camera");
-                    StageRange(new Vector3(5.5f, 0.92f, -0.5f), new Vector3(2.1f, 0.02f, -3), false);
-                    InputSystem.QueueStateEvent(mouse, new MouseState());
-                    Next();
-                }
-                else if (step == 222 && age > 0.4f)
-                {
-                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - 0.9f) < 0.03f,
-                        "Ground detection works on the existing raised platform, not only y=0");
-                    spaceTapReleased = false;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
-                    Next();
-                }
-                else if (step == 223 && age > 0.06f && !spaceTapReleased)
-                {
-                    spaceTapReleased = true;
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                }
-                else if (step == 223 && age > 0.25f)
-                {
-                    Require(player.position.y > 1.2f && !player.GetComponent<PlayerController>().IsGrounded,
-                        "Space also launches from an elevated surface");
-                    Next();
-                }
-                else if (step == 224 && age > 0.9f)
-                {
-                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - 0.9f) < 0.03f
-                        && recorder.LiveTexture && Quaternion.Angle(player.rotation, player.transform.rotation) < 0.1f,
-                        "Elevated jump lands back on the platform with a working feed");
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Space));
-                    Next();
-                }
-                else if (step == 225 && age > 0.06f)
-                {
-                    player.GetComponent<PlayerController>().SendMessage("OnApplicationFocus", false);
-                    InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                    Next();
-                }
-                else if (step == 226 && age > 0.3f)
-                {
-                    Require(player.GetComponent<PlayerController>().IsGrounded && Mathf.Abs(player.position.y - 0.9f) < 0.03f,
-                        "Losing focus cancels a pending Space tap; release cannot jump");
-                    Debug.Log("RRM LOCOMOTION CHECK PASSED: standing/moving/elevated Space taps, no air jump, "
-                        + "Space hold crouch without a release jump, Ctrl crouch, half speed and recovery, headroom, "
-                        + "independent live camera, lowered pickup, restart and focus cancellation.");
-                    if (combined)
-                    {
-                        InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.R));
-                        step = 300;
-                        since = Time.time;
-                    }
-                    else
-                    {
-                        Debug.Log("RRM LOCOMOTION PLAY CHECK PASSED; checking saved starter cover next.");
-                        step = 500;
-                        since = Time.time;
-                    }
                 }
                 else if (step == 300 && age > 0.7f)
                 {
@@ -1340,7 +1057,7 @@ namespace RRM.Editor
                         "Enemy commits to a windup before it can hurt the player");
                     placedDevice = recorder.GetComponent<CameraDevice>();
                     deviceId = placedDevice.Id;
-                    Require(placedDevice.State == CameraDeviceState.Placed && recorder.IsRecording && !recorder.LiveTexture,
+                    Require(placedDevice.State == CameraDeviceState.Placed && recorder.IsRecording && recorder.LiveTexture,
                         "Q places one camera and hides live feed while logical recording continues");
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState());
                     enemyFacing = dummyBody.rotation;
@@ -1381,7 +1098,7 @@ namespace RRM.Editor
                         && dummy.GetComponent<MeleeAttack>().Phase == MeleeAttack.AttackPhase.Recovery,
                         "A real mouse counterstrike damages the enemy during its recovery");
                     Require(placedDevice.RecordedHits == 1 && placedDevice.Events[0].Damage.Target == dummy,
-                        "Placed camera witnesses the player's counterstrike without restoring its feed");
+                        "Placed camera witnesses the player's counterstrike with its live feed");
                     InputSystem.QueueStateEvent(mouse, new MouseState());
                     Next();
                 }
@@ -1411,7 +1128,7 @@ namespace RRM.Editor
                         && placedDevice.Events[placedDevice.Events.Count - 1].Damage.Target == playerHealth
                         && placedDevice.RecordedHits == enemyHits + 1 && placedDevice.Id == deviceId
                         && Vector3.Distance(beforeLens, recorder.transform.position) < 0.001f
-                        && Quaternion.Angle(beforeLensRotation, recorder.transform.rotation) < 0.1f && !recorder.LiveTexture,
+                        && Quaternion.Angle(beforeLensRotation, recorder.transform.rotation) < 0.1f && recorder.LiveTexture,
                         "Fatal event retains correct actor/ID, fixed camera pose and private recording");
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
                     AimCamera(Vector2.zero, true);
@@ -1498,9 +1215,9 @@ namespace RRM.Editor
                     Require(placedDevice.State == CameraDeviceState.Placed && !placedDevice.Owner
                         && !player.GetComponent<PlayerController>().HeldCamera && placedDevice.Id == deviceId,
                         "Placement clears ownership, keeps the same device ID and empties the player's hand");
-                    Require(recorder.IsRecording && !recorder.liveCamera.enabled
-                        && !recorder.liveCamera.targetTexture && !recorder.LiveTexture && !placedTexture,
-                        "Placed recording stays active without a rendering camera or live texture");
+                    Require(recorder.IsRecording && recorder.liveCamera.enabled
+                        && recorder.liveCamera.targetTexture && recorder.LiveTexture && placedTexture,
+                        "Placed recording stays active with rendering camera and live texture");
                     Require(Vector3.Distance(recorder.lens.position, beforeLens) < 0.001f
                         && Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) < 0.1f,
                         "Placement preserves the exact world viewpoint");
@@ -1520,13 +1237,13 @@ namespace RRM.Editor
                     Require(Vector3.Distance(recorder.lens.position, beforeLens) < 0.001f
                         && Quaternion.Angle(recorder.lens.rotation, beforeLensRotation) < 0.1f,
                         "Player movement, turning and mouse deltas cannot move the placed camera");
-                    Require(recorder.IsRecording && !recorder.liveCamera.enabled
-                        && !recorder.LiveTexture && !recorder.liveCamera.targetTexture,
-                        "Placed camera remains logically active without giving the player a live view");
+                    Require(recorder.IsRecording && recorder.liveCamera.enabled
+                        && recorder.LiveTexture && recorder.liveCamera.targetTexture,
+                        "Placed camera remains logically active with a live view");
                     Require(dummy.GetComponent<PlayerController>().enabled
                         && Vector3.Distance(dummyBody.position, beforeDummy) > 0.25f, "Dummy keeps wandering while the player leaves");
                     Hurtbox torso = Array.Find(dummy.GetComponentsInChildren<Hurtbox>(), zone => zone.part == BodyPart.Torso);
-                    Require(torso && recorder.CanSee(torso.transform.position), "Placed visibility still uses the fixed lens with rendering disabled");
+                    Require(torso && recorder.CanSee(torso.transform.position), "Placed visibility still uses the fixed lens with rendering enabled");
                     int recorded = recorder.RecordedHits;
                     // Test-only damage exercises the real event subscription, not a new recording/scoring system.
                     Require(dummy.ApplyDamage(player.gameObject, torso, torso.transform.position, Vector3.forward, 1f, 0f)
@@ -1536,13 +1253,13 @@ namespace RRM.Editor
                     dummy.ApplyDamage(player.gameObject, torso, torso.transform.position, Vector3.forward, 1f, 0f);
                     Require(recorder.RecordedHits == recorded + 1, "Disabled recorder unsubscribes from damage");
                     recorder.enabled = true;
-                    Require(recorder.IsRecording && !recorder.liveCamera.enabled && !recorder.LiveTexture,
-                        "Re-enabling placed recording does not restore remote video");
+                    Require(recorder.IsRecording && recorder.liveCamera.enabled && recorder.LiveTexture,
+                        "Re-enabling placed recording restores remote video");
                     dummy.ApplyDamage(player.gameObject, torso, torso.transform.position, Vector3.forward, 1f, 0f);
                     Require(recorder.RecordedHits == recorded + 2, "Re-enabled recorder subscribes exactly once");
                     placedRecordings = recorder.RecordedHits;
                     ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/passive-recording-ui.png"));
-                    Debug.Log("RRM PASSIVE CHECK: F hides feed, releases texture and stops rendering; fixed recorder receives damage privately while player and Dummy move.");
+                    Debug.Log("RRM PASSIVE CHECK: Q preserves feed and rendering; fixed recorder receives damage while player and Dummy move.");
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.Q));
                     Next();
                 }
@@ -1550,8 +1267,8 @@ namespace RRM.Editor
                 {
                     Require(recorder.IsPlaced && recorder.transform.parent == null
                         && Object.FindObjectsByType<CameraRecorder>(FindObjectsSortMode.None).Length == 1
-                        && recorder.IsRecording && !recorder.LiveTexture && !recorder.liveCamera.enabled,
-                        "F from too far away cannot pick up the device or restore remote video");
+                        && recorder.IsRecording && recorder.LiveTexture && recorder.liveCamera.enabled,
+                        "F from too far away cannot pick up the device; placed video continues");
                     if (!Application.isBatchMode)
                         Require(File.Exists(Path.GetFullPath("Verification/passive-handheld-ui.png"))
                             && File.Exists(Path.GetFullPath("Verification/passive-recording-ui.png")), "Handheld and passive screenshots exist");
@@ -1561,7 +1278,7 @@ namespace RRM.Editor
                 else if (step == 45 && age > 0.2f)
                 {
                     Require(recorder.ControlsVisible && recorder.IsPlaced && recorder.IsRecording
-                        && !recorder.LiveTexture && !recorder.liveCamera.enabled, "F1 opens controls without restoring remote video");
+                        && recorder.LiveTexture && recorder.liveCamera.enabled, "F1 opens controls while placed video continues");
                     ScreenCapture.CaptureScreenshot(Path.GetFullPath("Verification/controls-placed-ui.png"));
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState());
                     Next();
@@ -1573,8 +1290,8 @@ namespace RRM.Editor
                 }
                 else if (step == 47 && age > 0.2f)
                 {
-                    Require(!recorder.ControlsVisible && recorder.IsRecording && !recorder.LiveTexture,
-                        "F1 closes controls and leaves placed recording passive");
+                    Require(!recorder.ControlsVisible && recorder.IsRecording && recorder.LiveTexture,
+                        "F1 closes controls and leaves placed recording live");
                     InputSystem.QueueStateEvent(keyboard, new KeyboardState());
                     step = 52;
                     since = Time.time;
@@ -1717,7 +1434,7 @@ namespace RRM.Editor
                         Require(device.LastEventDistance.HasValue && Mathf.Abs(device.LastEventDistance.Value - distance) < 0.001f,
                             "Report distance refers to the last witnessed event, even if the death was missed");
                     else Require(!device.LastEventDistance.HasValue && recorder.ReportText.Contains("N/A"), "No evidence has no invented distance");
-                    if (placed) Require(!recorder.LiveTexture && !recorder.liveCamera.enabled, "End-of-round report does not restore placed live video");
+                    if (placed) Require(recorder.LiveTexture && recorder.liveCamera.enabled, "End-of-round report preserves placed live video");
                     Next();
                 }
                 else if ((step == 57 || step == 61 || step == 65 || step == 69) && age > 0.2f)
@@ -1940,7 +1657,7 @@ namespace RRM.Editor
                         && controller.LeftHand.State == HandState.Empty && !controller.HeldCamera
                         && controller.HandHolding(placedDevice) == null,
                         "Q clears the left hand without changing the device ID or creating an item");
-                    Require(recorder.IsPlaced && recorder.IsRecording && !recorder.LiveTexture
+                    Require(recorder.IsPlaced && recorder.IsRecording && recorder.LiveTexture
                         && Vector3.Distance(recorder.transform.position, beforeMount) < 0.001f
                         && Quaternion.Angle(recorder.transform.rotation, beforeLensRotation) < 0.1f,
                         "Placing the independently aimed camera keeps its exact pose and passive recording");
@@ -2030,7 +1747,7 @@ namespace RRM.Editor
                 }
                 else if (step == 146 && age > 0.2f)
                 {
-                    Require(recorder.IsPlaced && recorder.IsRecording && !recorder.LiveTexture
+                    Require(recorder.IsPlaced && recorder.IsRecording && recorder.LiveTexture
                         && !placedDevice.Owner && player.GetComponent<PlayerController>().RightHand.State == HandState.Empty
                         && placedDevice.Id == deviceId && !player.GetComponent<MeleeAttack>().IsBusy,
                         "E releases the right-hand camera; held RMB does not become a fresh attack click");
@@ -2153,8 +1870,8 @@ namespace RRM.Editor
                 }
                 else if (step == 105 && age > 0.3f)
                 {
-                    Require(recorder.IsPlaced && recorder.IsRecording && !recorder.LiveTexture
-                        && recorder.InspectBlood(evidenceMark).Visible, "Placed camera still sees persistent evidence without remote video");
+                    Require(recorder.IsPlaced && recorder.IsRecording && recorder.LiveTexture
+                        && recorder.InspectBlood(evidenceMark).Visible, "Placed camera still sees persistent evidence with live placed video");
                     recorder.transform.Rotate(0, 180, 0, Space.World);
                     Require(!recorder.InspectBlood(evidenceMark).Visible, "Turning away changes current blood visibility to NO");
                     CheckEvidenceLight(new Vector3(2.8f, 1.05f, 0.4f), VisibilityLevel.Normal);
@@ -2326,7 +2043,7 @@ namespace RRM.Editor
                 }
                 else if (step == 90 && age > 0.3f)
                 {
-                    Require(recorder.IsPlaced && !recorder.LiveTexture, "F leaves the same passive camera watching the doorway");
+                    Require(recorder.IsPlaced && recorder.LiveTexture, "F leaves the same passive camera watching the doorway");
                     Require(camera.rect == new Rect(0, 0, 1, 1), "Placing the camera restores the full room viewport");
                     Require(recorder.LightReadout == string.Empty && !recorder.VisibleTargetLightLevel.HasValue,
                         "Placed recording does not expose live light or quality diagnostics");
@@ -2769,64 +2486,6 @@ namespace RRM.Editor
             }
             Require(count > 100, "The actual red dummy is visible in the handheld image");
             return (float)(x / count);
-        }
-
-        private static void TickStarterCover(float age)
-        {
-            var controller = player.GetComponent<PlayerController>();
-            Bounds cover = GameObject.Find("Low Cover").GetComponent<Collider>().bounds;
-            if (step == 500 && age > 0.5f)
-            {
-                Require(Mathf.Abs(cover.size.y - 0.45f) < 0.001f && controller.jumpHeight == 0.6f,
-                    "Saved cover is 45 cm; existing jump is unchanged");
-                StageRange(new Vector3(cover.center.x, 0.02f, cover.min.z - 0.85f), new Vector3(6, 0.02f, 5), false);
-                player.rotation = Quaternion.identity; player.transform.rotation = player.rotation;
-                InputSystem.QueueStateEvent(mouse, new MouseState());
-                Next();
-            }
-            else if (step == 501 && age > 0.3f)
-            {
-                Require(controller.IsGrounded, "Start on the floor, not already on cover");
-                beforeLens = recorder.lens.position;
-                spaceTapReleased = false;
-                InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W, Key.Space));
-                Next();
-            }
-            else if (step == 502 && age > 0.06f && !spaceTapReleased)
-            {
-                spaceTapReleased = true;
-                InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.W));
-            }
-            else if (step == 502 && age > 0.2f && (player.position.z >= cover.center.z - 0.2f || age > 1.2f))
-            {
-                Require(player.position.y > cover.max.y - 0.05f && player.position.z > cover.min.z + 0.2f,
-                    $"W + Space clears the front edge: {player.position}");
-                InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                Next();
-            }
-            else if (step == 503 && age > 0.7f)
-            {
-                Require(controller.IsGrounded && Mathf.Abs(player.position.y - cover.max.y) < 0.04f
-                    && player.position.z > cover.min.z && player.position.z < cover.max.z,
-                    $"Stable landing on cover: {player.position}");
-                Require(recorder.LiveTexture && Mathf.Abs(recorder.lens.position.y - beforeLens.y - cover.max.y) < 0.05f,
-                    "Handheld lens rises with the player and feed stays live");
-                Capture("starter-cover-jump.png", 1280, 800);
-                ReadLiveFrame("starter-cover-feed.png");
-                InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.S));
-                Next();
-            }
-            else if (step == 504 && age > 0.85f)
-            {
-                InputSystem.QueueStateEvent(keyboard, new KeyboardState());
-                Next();
-            }
-            else if (step == 505 && age > 0.4f)
-            {
-                Require(controller.IsGrounded && Mathf.Abs(player.position.y) < 0.04f && player.position.z < cover.min.z,
-                    "S walks back off cover and lands on floor");
-                Finish(true, "RRM STARTER COVER PLAY CHECK PASSED: saved 45 cm cover, real W+Space landing, live camera and S descent; movement unchanged.");
-            }
         }
 
         private static void Next() { step++; since = Time.time; }
